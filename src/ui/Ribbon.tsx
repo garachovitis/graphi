@@ -125,7 +125,7 @@ function DesktopRibbon({ api }: { api: AppApi }) {
         </div>
         <CommandSearch index={cmdIndex} onOpen={() => setIndexing(true)} onFindInDoc={() => api.openFind('find')}
           onPick={(c) => { setTab(c.tab as TabId); setPending(c) }} />
-        <span className="app-mark" aria-hidden>G</span>
+        <img className="app-mark" src="./icons/logo-mark.png" alt="" aria-hidden draggable={false} />
       </div>
       <nav className="tabs" role="tablist">
         {tabs.map(([id, label, ctx]) => (

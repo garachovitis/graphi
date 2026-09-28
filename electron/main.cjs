@@ -10,6 +10,7 @@ const fsSync = require('node:fs')
 const { t, setLang, getLang, LANG_NAMES } = require('./i18n.cjs')
 
 const isMac = process.platform === 'darwin'
+const DEV_ICON = path.join(__dirname, '../build/icon.png')
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
 const OPENABLE = ['.docx', '.grafi', '.worder', '.html', '.htm', '.txt', '.md', '.odt']
 
@@ -55,6 +56,8 @@ function createWindow(openPath) {
     minWidth: 900,
     minHeight: 600,
     title: 'Grafi',
+    // Packaged builds take the icon from electron-builder; this covers `npm run dev` on Windows / Linux.
+    ...(app.isPackaged ? {} : { icon: DEV_ICON }),
     backgroundColor: '#1ab3ac',
     // The app's own brand-coloured bar is the title bar; OS window controls sit on top of it.
     titleBarStyle: 'hidden',
@@ -448,6 +451,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.whenReady().then(() => {
+    if (!app.isPackaged && isMac) app.dock?.setIcon(DEV_ICON)
     // Local Font Access API → real list of installed fonts in the font picker.
     session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
       cb(permission === 'local-fonts' || permission === 'clipboard-read' || permission === 'clipboard-sanitized-write')

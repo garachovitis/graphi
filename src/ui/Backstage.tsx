@@ -70,6 +70,7 @@ export function Backstage({ api, page, setPage, onClose }: { api: AppApi; page: 
       <div className="bs-top">
         <button className="bs-back" onClick={onClose} title={`${t('bs.back')} (Esc)`}><ArrowLeft size={17} /> <span>{t('bs.back')}</span></button>
         <div className="bs-top-title">{t('bs.topTitle', { name: api.file.name })}</div>
+        <img className="app-mark" src="./icons/logo-mark.png" alt="" aria-hidden draggable={false} />
       </div>
       <div className="bs-body">
       <aside className="bs-nav">
@@ -85,7 +86,7 @@ export function Backstage({ api, page, setPage, onClose }: { api: AppApi; page: 
         <button className="bs-nav-item" onClick={onClose}><X size={17} /><span>{t('bs.close')}</span></button>
       </aside>
       <main className="bs-main">
-        {page === 'home' && (<><div className="bs-home-head"><h1>{t('bs.welcome')}</h1><div className="bs-home-switches"><LangSwitch /><ThemeSwitch onMore={() => setPage('appearance')} /></div></div><h2>{t('bs.startTemplate')}</h2><Templates /><h2>{t('bs.recent')}</h2><Recent /></>)}
+        {page === 'home' && (<><div className="bs-home-head"><div className="bs-home-brand"><img className="bs-logo" src="./icons/logo-mark.png" alt="Grafi" draggable={false} /><h1>{t('bs.welcome')}</h1></div><div className="bs-home-switches"><LangSwitch /><ThemeSwitch onMore={() => setPage('appearance')} /></div></div><h2>{t('bs.startTemplate')}</h2><Templates /><h2>{t('bs.recent')}</h2><Recent /></>)}
         {page === 'appearance' && (
           <>
             <h1>{t('bs.options')}</h1>
