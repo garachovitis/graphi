@@ -1,6 +1,6 @@
 // Grafi service worker: offline app shell. Network-first for the HTML (so updates
 // arrive), cache-first for hashed assets (immutable), fonts and icons.
-const CACHE = 'grafi-v1'
+const CACHE = 'grafi-v2'
 self.addEventListener('install', (e) => { self.skipWaiting() })
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()))

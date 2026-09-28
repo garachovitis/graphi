@@ -134,7 +134,7 @@
           ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon-win.png"
     },
     "nsis": {
       "oneClick": false,
@@ -150,7 +150,7 @@
         "rpm"
       ],
       "category": "Office;WordProcessor",
-      "icon": "build/icon.png",
+      "icon": "build/icon-win.png",
       "maintainer": "Grafi",
       "synopsis": "Επεξεργαστής κειμένου συμβατός με DOCX/ODT/PDF"
     }

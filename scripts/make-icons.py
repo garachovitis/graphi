@@ -45,7 +45,8 @@ def desktop_icon():
     return c
 
 
-save(desktop_icon(), 'build/icon.png')
+save(desktop_icon(), 'build/icon.png')  # macOS
+save(place(1024, .8, WHITE, 'squircle'), 'build/icon-win.png')  # Windows / Linux: no macOS padding, reads larger at 16–32px
 
 # Web / PWA
 save(place(192, .96), 'public/favicon.png')
