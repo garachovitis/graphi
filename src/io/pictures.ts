@@ -3,6 +3,7 @@
 import type { JSONContent } from '@tiptap/core'
 import { bakePicture, displaySize, needsBake, type ImgAttrs } from '../editor/image'
 import { dataUrlToBytes, loadImage, toPortableImage } from './images'
+import { shapeSrc } from '../editor/shapes'
 
 export interface PreparedPicture {
   bytes: Uint8Array
@@ -14,20 +15,24 @@ export interface PreparedPicture {
 }
 
 const DEFAULTS: Omit<ImgAttrs, 'src'> = {
-  alt: null, title: null, width: null, height: null, wrap: null, align: 'center', shape: 'rect', aspect: null, focusX: 50, focusY: 50, shadow: 'none', radius: 12, x: null,
+  alt: null, title: null, width: null, height: null, wrap: null, align: 'center', shape: 'rect', aspect: null, focusX: 50, focusY: 50, shadow: 'none', radius: 12, x: null, y: null, vshape: null,
 }
 
 export const pictureAttrs = (n: JSONContent): ImgAttrs => ({ ...DEFAULTS, ...(n.attrs || {}) } as ImgAttrs)
 
 export const pictureKey = (a: ImgAttrs) =>
-  JSON.stringify([a.src.length, a.src.slice(-64), a.width, a.height, a.shape, a.aspect, a.focusX, a.focusY, a.shadow, a.radius])
+  a.vshape
+    ? JSON.stringify(['shape', a.vshape, a.width, a.height])
+    : JSON.stringify([a.src.length, a.src.slice(-64), a.width, a.height, a.shape, a.aspect, a.focusX, a.focusY, a.shadow, a.radius])
 
 export async function preparePictures(doc: JSONContent, maxWidthPx: number): Promise<Map<string, PreparedPicture>> {
   const out = new Map<string, PreparedPicture>()
   const nodes: ImgAttrs[] = []
   const walk = (n: JSONContent) => { if (n.type === 'image' && n.attrs?.src) nodes.push(pictureAttrs(n)); n.content?.forEach(walk) }
   walk(doc)
-  for (const a of nodes) {
+  for (let a of nodes) {
+    // Shapes: draw the SVG at the exact displayed size, so the raster is sharp and unstretched.
+    if (a.vshape) { const d = displaySize(a); a = { ...a, src: shapeSrc(a.vshape, d.w, d.h) } }
     const key = pictureKey(a)
     if (out.has(key)) continue
     const base = await toPortableImage(a.src)

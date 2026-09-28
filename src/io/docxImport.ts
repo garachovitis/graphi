@@ -13,6 +13,7 @@ import type { JSONContent } from '@tiptap/core'
 import { DEFAULT_SETTINGS, detectPaper, normalizeSettings, twipToMm, type DocSettings, type HFAlign } from '../model/settings'
 import { DEFAULT_FONT, PARA_STYLES, fontStack, type ParaStyle } from '../model/styles'
 import { bytesToDataUrl } from './images'
+import { colorDistance, isHex, parseThemeRef, parseThemeXml, resolveColor, snapPct, themeVar, type DocTheme, type Slot } from '../model/themes'
 import { t } from '../i18n'
 
 type El = Element
@@ -45,7 +46,23 @@ const HIGHLIGHT: Record<string, string> = {
   darkYellow: '#808000', darkGray: '#808080', lightGray: '#c0c0c0', black: '#000000', white: '#ffffff',
 }
 
-interface Theme { minor: string; major: string }
+interface Theme { minor: string; major: string; doc?: DocTheme | null }
+
+const THEME_SLOT: Record<string, Slot> = {
+  text1: 'dk1', dark1: 'dk1', background1: 'lt1', light1: 'lt1', text2: 'dk2', dark2: 'dk2', background2: 'lt2', light2: 'lt2',
+  accent1: 'accent1', accent2: 'accent2', accent3: 'accent3', accent4: 'accent4', accent5: 'accent5', accent6: 'accent6',
+  hyperlink: 'hlink', followedHyperlink: 'folHlink',
+}
+/** w:themeColor (+ w:themeTint / w:themeShade) → a theme-linked colour, when it is one Grafi can express. */
+function themeLinked(el: El, prefix: 'Color' | 'Fill', theme: Theme): string | null {
+  const slot = THEME_SLOT[attr(el, `w:theme${prefix}`) || '']
+  if (!slot || !theme.doc) return null
+  const tint = attr(el, prefix === 'Color' ? 'w:themeTint' : 'w:themeFillTint')
+  const shade = attr(el, prefix === 'Color' ? 'w:themeShade' : 'w:themeFillShade')
+  const raw = tint ? (1 - parseInt(tint, 16) / 255) * 100 : shade ? -(1 - parseInt(shade, 16) / 255) * 100 : 0
+  const pct = Number.isFinite(raw) ? snapPct(Math.round(raw)) : null
+  return pct == null ? null : themeVar(slot, pct, theme.doc)
+}
 
 function parseRPr(rPr: El | null, theme: Theme): RunProps {
   const r: RunProps = {}
@@ -67,11 +84,11 @@ function parseRPr(rPr: El | null, theme: Theme): RunProps {
   const c = child(rPr, 'w:color')
   if (c) {
     const v = val(c)
-    r.color = v && v !== 'auto' ? `#${v.toLowerCase()}` : null
+    r.color = themeLinked(c, 'Color', theme) ?? (v && v !== 'auto' ? `#${v.toLowerCase()}` : null)
   }
   const h = val(child(rPr, 'w:highlight')); if (h) r.highlight = h === 'none' ? null : HIGHLIGHT[h] || null
   const shd = child(rPr, 'w:shd')
-  if (shd) { const fill = attr(shd, 'w:fill'); r.shading = fill && fill !== 'auto' ? `#${fill.toLowerCase()}` : null }
+  if (shd) { const fill = attr(shd, 'w:fill'); r.shading = themeLinked(shd, 'Fill', theme) ?? (fill && fill !== 'auto' ? `#${fill.toLowerCase()}` : null) }
   const v = onOff(child(rPr, 'w:vanish')); if (v !== undefined) r.hidden = v
   const caps = onOff(child(rPr, 'w:caps')); if (caps !== undefined) r.caps = caps
   return r
@@ -299,7 +316,7 @@ async function loadMedia(ctx: Ctx, basePath: string, rels: Map<string, { target:
 
 type Mark = { type: string; attrs?: Record<string, unknown> }
 
-function marksFor(rp: RunProps, st: ParaStyle): Mark[] {
+function marksFor(rp: RunProps, st: ParaStyle, docTheme?: DocTheme | null): Mark[] {
   const m: Mark[] = []
   if (rp.bold && !st.bold) m.push({ type: 'bold' })
   if (rp.italic && !st.italic) m.push({ type: 'italic' })
@@ -313,7 +330,10 @@ function marksFor(rp: RunProps, st: ParaStyle): Mark[] {
   if (rp.sizePt && Math.abs(rp.sizePt - st.sizePt) > 0.01) ts.fontSize = `${rp.sizePt}pt`
   const styleColor = (st.color || '#000000').toLowerCase()
   const color = rp.color ?? '#000000'
-  if (color !== styleColor) ts.color = color
+  // "Text 1" and friends are usually just the style's own colour: no mark for those.
+  const rc = resolveColor(color, docTheme ?? undefined).toLowerCase()
+  const same = isHex(rc) && isHex(styleColor) ? colorDistance(rc, styleColor) <= 2 : rc === styleColor
+  if (!same) ts.color = color
   if (rp.shading) ts.backgroundColor = rp.shading
   if (Object.keys(ts).length) m.push({ type: 'textStyle', attrs: { fontFamily: null, fontSize: null, color: null, backgroundColor: null, ...ts } })
   if (rp.highlight) m.push({ type: 'highlight', attrs: { color: rp.highlight } })
@@ -391,7 +411,7 @@ function readParagraph(p: El, ctx: Ctx): ParaOut {
       if (direct.underline === undefined) rp.underline = false
       if (direct.color === undefined) rp.color = paraRun.color
     }
-    const marks = [...marksFor(rp, st), ...linkMarks]
+    const marks = [...marksFor(rp, st, ctx.theme.doc), ...linkMarks]
     for (const c of kids(r)) {
       switch (c.tagName) {
         case 'w:fldChar': {
@@ -497,6 +517,7 @@ function readImage(el: El, ctx: Ctx): JSONContent | null {
   let wrap: string | null = null
   let align = 'center'
   let x: number | null = null
+  let y: number | null = null
   const anchor = el.getElementsByTagName('wp:anchor')[0]
   if (anchor) {
     const has = (t: string) => anchor.getElementsByTagName(t).length > 0
@@ -515,10 +536,16 @@ function readImage(el: El, ctx: Ctx): JSONContent | null {
       if ((rel === 'column' || rel === 'margin') && off >= 0) x = Math.round(off)
     }
     if (wrap === 'square' && align === 'center') align = 'left'
+    // Vertical offset below the anchor paragraph (as we export it) → our free vertical spot.
+    const posV = anchor.getElementsByTagName('wp:positionV')[0]
+    if (posV?.getAttribute('relativeFrom') === 'paragraph') {
+      const off = Number(posV.getElementsByTagName('wp:posOffset')[0]?.textContent || 0) / 9525
+      if (off >= 4) y = Math.round(off)
+    }
   }
   const docPr = el.getElementsByTagName('wp:docPr')[0]
   const alt = docPr?.getAttribute('descr') || docPr?.getAttribute('title') || null
-  return { type: 'image', attrs: { src, alt, title: null, width, height, wrap, align, x } }
+  return { type: 'image', attrs: { src, alt, title: null, width, height, wrap, align, x, y } }
 }
 
 function readTable(tbl: El, ctx: Ctx): JSONContent {
@@ -542,7 +569,11 @@ function readTable(tbl: El, ctx: Ctx): JSONContent {
         continue
       }
       const content = readBlocks(kids(tc), ctx)
-      const shd = attr(child(tcPr, 'w:shd'), 'w:fill')
+      const shdEl = child(tcPr, 'w:shd')
+      const fill = attr(shdEl, 'w:fill')
+      let bg = (shdEl && themeLinked(shdEl, 'Fill', ctx.theme)) ?? (fill && fill !== 'auto' ? `#${fill.toLowerCase()}` : null)
+      // Header rows written by Grafi carry the default header fill (Accent 1, Lighter 88%): leave it to the theme.
+      if (isHeader && parseThemeRef(bg)?.slot === 'accent1' && parseThemeRef(bg)?.pct === 88) bg = null
       const va = val(child(tcPr, 'w:vAlign'))
       const widths = grid.slice(col, col + span)
       const cell: JSONContent = {
@@ -551,7 +582,7 @@ function readTable(tbl: El, ctx: Ctx): JSONContent {
           colspan: span,
           rowspan: 1,
           colwidth: widths.length === span && widths.every((w) => w > 0) ? widths : null,
-          backgroundColor: shd && shd !== 'auto' ? `#${shd.toLowerCase()}` : null,
+          backgroundColor: bg,
           verticalAlign: va === 'center' ? 'middle' : va === 'bottom' ? 'bottom' : null,
         },
         content: content.length ? content : [{ type: 'paragraph' }],
@@ -757,6 +788,7 @@ export async function importDocx(data: Uint8Array): Promise<ImportResult> {
     const major = t.getElementsByTagName('a:majorFont')[0]?.getElementsByTagName('a:latin')[0]?.getAttribute('typeface')
     if (minor) theme.minor = minor
     if (major) theme.major = major
+    theme.doc = parseThemeXml(themeXml)
   }
   const stylesXml = await str('word/styles.xml')
   const numberingXml = await str('word/numbering.xml')
@@ -820,6 +852,8 @@ export async function importDocx(data: Uint8Array): Promise<ImportResult> {
   }
 
   if (ctx.headingNumbers) s.headingNumbers = true
+  // The document keeps its Word theme (colours + fonts); styles and theme-coloured text follow it.
+  if (theme.doc) s.theme = theme.doc
   return {
     doc: { type: 'doc', content: content.length ? content : [{ type: 'paragraph' }] },
     settings: s,

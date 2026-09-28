@@ -5,7 +5,8 @@ import JSZip from 'jszip'
 import type { JSONContent } from '@tiptap/core'
 import { normalizeSettings, detectPaper, type DocSettings } from '../model/settings'
 import { DEFAULT_FONT, PARA_STYLES, type ParaStyle } from '../model/styles'
-import { fontSizeToPt, normalizeColor } from '../editor/units'
+import { fontSizeToPt, colorHex } from '../editor/units'
+import { tableHeaderFill } from '../model/docCss'
 import { captionNumbers, collectHeadingsJson, escapeXml, escapeHtml } from './common'
 import { bytesToDataUrl } from './images'
 import { pictureAttrs, pictureKey, preparePictures } from './pictures'
@@ -69,12 +70,12 @@ function textProps(marks: JSONContent['marks'] = [], fonts: Set<string>): string
       case 'subscript': a.push('style:text-position="sub 58%"'); break
       case 'superscript': a.push('style:text-position="super 58%"'); break
       case 'code': fonts.add('Courier New'); a.push('style:font-name="Courier New" fo:background-color="#f1f3f3"'); break
-      case 'highlight': a.push(`fo:background-color="${normalizeColor(at.color) || '#ffff00'}"`); break
+      case 'highlight': a.push(`fo:background-color="${colorHex(at.color) || '#ffff00'}"`); break
       case 'textStyle': {
         if (at.fontFamily) { const f = firstFamily(at.fontFamily); fonts.add(f); a.push(`style:font-name="${escapeXml(f)}"`) }
         const pt = fontSizeToPt(at.fontSize); if (pt) a.push(`fo:font-size="${pt}pt" style:font-size-asian="${pt}pt" style:font-size-complex="${pt}pt"`)
-        const c = normalizeColor(at.color); if (c) a.push(`fo:color="${c}"`)
-        const bg = normalizeColor(at.backgroundColor); if (bg) a.push(`fo:background-color="${bg}"`)
+        const c = colorHex(at.color); if (c) a.push(`fo:color="${c}"`)
+        const bg = colorHex(at.backgroundColor); if (bg) a.push(`fo:background-color="${bg}"`)
         break
       }
     }
@@ -121,9 +122,9 @@ function inlineXml(n: JSONContent, ctx: Ctx): string {
         if (a.wrap) {
           anchor = 'paragraph'
           const hpos = a.x != null ? 'from-left' : a.wrap === 'square' ? (a.align === 'right' ? 'right' : 'left') : a.align === 'left' ? 'left' : a.align === 'right' ? 'right' : 'center'
-          style = ctx.auto.get('graphic', 'fr', `<style:graphic-properties style:wrap="${a.wrap === 'square' ? 'parallel' : 'none'}" style:number-wrapped-paragraphs="no-limit" style:horizontal-pos="${hpos}" style:horizontal-rel="paragraph" style:vertical-pos="top" style:vertical-rel="paragraph" fo:margin-top="8pt" fo:margin-bottom="8pt" fo:margin-left="8pt" fo:margin-right="8pt" fo:border="none"/>`, 'Graphics')
+          style = ctx.auto.get('graphic', 'fr', `<style:graphic-properties style:wrap="${a.wrap === 'square' ? 'parallel' : 'none'}" style:number-wrapped-paragraphs="no-limit" style:horizontal-pos="${hpos}" style:horizontal-rel="paragraph" style:vertical-pos="${a.y ? 'from-top' : 'top'}" style:vertical-rel="paragraph" fo:margin-top="8pt" fo:margin-bottom="8pt" fo:margin-left="8pt" fo:margin-right="8pt" fo:border="none"/>`, 'Graphics')
         }
-        x = `<draw:frame draw:style-name="${style}" text:anchor-type="${anchor}"${a.wrap && a.x != null ? ` svg:x="${mm(a.x)}"` : ''} svg:width="${mm(pic.w)}" svg:height="${mm(pic.h)}" draw:z-index="0"><draw:image xlink:href="${pic.path}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad" draw:mime-type="${pic.mime}"/>${a.alt ? `<svg:desc>${escapeXml(a.alt)}</svg:desc>` : ''}</draw:frame>`
+        x = `<draw:frame draw:style-name="${style}" text:anchor-type="${anchor}"${a.wrap && a.x != null ? ` svg:x="${mm(a.x)}"` : ''}${a.wrap && a.y ? ` svg:y="${mm(a.y)}"` : ''} svg:width="${mm(pic.w)}" svg:height="${mm(pic.h)}" draw:z-index="0"><draw:image xlink:href="${pic.path}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad" draw:mime-type="${pic.mime}"/>${a.alt ? `<svg:desc>${escapeXml(a.alt)}</svg:desc>` : ''}</draw:frame>`
       }
     }
     const link = c.marks?.find((m) => m.type === 'link')
@@ -252,7 +253,7 @@ function tableXml(n: JSONContent, ctx: Ctx): string {
       const cs = ca.colspan || 1
       const rs = ca.rowspan || 1
       for (let dr = 1; dr < rs; dr++) for (let dc = 0; dc < cs; dc++) covered.add(`${ri + dr}:${col + dc}`)
-      const bg = normalizeColor(ca.backgroundColor) || (cell.type === 'tableHeader' ? '#e3f7f6' : null)
+      const bg = colorHex(ca.backgroundColor) || (cell.type === 'tableHeader' ? tableHeaderFill() : null)
       const va = ca.verticalAlign === 'middle' ? 'middle' : ca.verticalAlign === 'bottom' ? 'bottom' : 'top'
       const cellStyle = ctx.auto.get('table-cell', 'Cell', `<style:table-cell-properties fo:padding-left="0.1in" fo:padding-right="0.1in" fo:padding-top="0.02in" fo:padding-bottom="0.02in" fo:border="0.5pt solid #7f8c8c" style:vertical-align="${va}"${bg ? ` fo:background-color="${bg}"` : ''}/>`)
       const inner = (cell.content || []).map((b) => blockXml(b, ctx, { parent: 'Table_20_Contents' })).join('') || '<text:p/>'
@@ -518,7 +519,7 @@ export async function importOdt(data: Uint8Array): Promise<{ html: string; setti
           const wrap = anchorType === 'as-char' || (anchorType === 'char' && !wrapAttr) ? '' : wrapAttr === 'none' ? 'topBottom' : wrapAttr ? 'square' : ''
           const hpos = gp?.getAttribute('style:horizontal-pos')
           const align = hpos === 'left' || hpos === 'from-left' ? 'left' : hpos === 'right' ? 'right' : wrap === 'square' ? 'left' : 'center'
-          if (src) out += `<img src="${src}"${cm(e.getAttribute('svg:width')) ? ` width="${cm(e.getAttribute('svg:width'))}"` : ''}${cm(e.getAttribute('svg:height')) ? ` height="${cm(e.getAttribute('svg:height'))}"` : ''}${wrap ? ` data-wrap="${wrap}" data-align="${align}"` : ''}${wrap && hpos === 'from-left' && cm(e.getAttribute('svg:x')) != null ? ` data-x="${cm(e.getAttribute('svg:x'))}"` : ''}>`
+          if (src) out += `<img src="${src}"${cm(e.getAttribute('svg:width')) ? ` width="${cm(e.getAttribute('svg:width'))}"` : ''}${cm(e.getAttribute('svg:height')) ? ` height="${cm(e.getAttribute('svg:height'))}"` : ''}${wrap ? ` data-wrap="${wrap}" data-align="${align}"` : ''}${wrap && hpos === 'from-left' && cm(e.getAttribute('svg:x')) != null ? ` data-x="${cm(e.getAttribute('svg:x'))}"` : ''}${wrap && gp?.getAttribute('style:vertical-pos') === 'from-top' && (cm(e.getAttribute('svg:y')) ?? 0) >= 4 ? ` data-y="${cm(e.getAttribute('svg:y'))}"` : ''}>`
           else if (img) warnings.add(t('io.odtImages'))
           break
         }

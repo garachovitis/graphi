@@ -1,6 +1,8 @@
 // Document-level settings (page geometry, header/footer) and unit conversions.
 // All geometry is stored in millimetres; CSS pixels are 96/in, DOCX uses twips (1/1440 in).
 import { t, fmtNum, fmtDate, type Key } from '../i18n'
+import { DEFAULT_THEME, sanitizeTheme, type DocTheme } from './themes'
+import { legacyTheme } from './styles'
 
 export const MM_PER_IN = 25.4
 export const PX_PER_IN = 96
@@ -60,6 +62,8 @@ export interface DocSettings {
   title: string
   author: string
   styleSet: string
+  /** Theme colours and fonts (Design ▸ Themes). Travels with the document. */
+  theme: DocTheme
   /** Multilevel heading numbering 1 / 1.1 / 1.1.1 (Word: Multilevel list linked to Heading styles). */
   headingNumbers: boolean
 }
@@ -84,6 +88,7 @@ export const DEFAULT_SETTINGS: DocSettings = {
   title: '',
   author: '',
   styleSet: 'teal',
+  theme: DEFAULT_THEME,
   headingNumbers: false,
 }
 
@@ -110,6 +115,8 @@ export function normalizeSettings(raw: Partial<DocSettings> | undefined): DocSet
   const s = { ...DEFAULT_SETTINGS, ...(raw || {}) }
   s.margins = { ...DEFAULT_SETTINGS.margins, ...(raw?.margins || {}) }
   s.hf = { ...DEFAULT_SETTINGS.hf, ...(raw?.hf || {}) }
+  // Older documents have no theme: rebuild the look their style set used to have.
+  s.theme = sanitizeTheme(raw?.theme) ?? legacyTheme(s.styleSet)
   return s
 }
 

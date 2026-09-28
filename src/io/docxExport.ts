@@ -11,7 +11,9 @@ import type { JSONContent } from '@tiptap/core'
 import type { DocSettings } from '../model/settings'
 import { mmToTwip } from '../model/settings'
 import { DEFAULT_FONT, PARA_STYLES, type ParaStyle } from '../model/styles'
-import { fontSizeToPt, normalizeColor } from '../editor/units'
+import { fontSizeToPt, colorHex, normalizeColor } from '../editor/units'
+import { currentTheme, parseThemeRef, type ColorRef, type Slot } from '../model/themes'
+import { HEADER_TINT } from '../model/docCss'
 import { isSectionBreak, type BreakKind } from '../editor/nodes'
 import { pictureAttrs, pictureKey, preparePictures, type PreparedPicture } from './pictures'
 import { captionNumbers, collectHeadingsJson } from './common'
@@ -30,8 +32,29 @@ const ALIGN: Record<string, Any> = {
 }
 
 const hex = (c: string | null | undefined) => {
-  const n = normalizeColor(c)
+  const n = colorHex(c)
   return n && n.startsWith('#') ? n.slice(1).toUpperCase() : undefined
+}
+
+// Theme colours are written as Word theme colours (w:themeColor + tint/shade), so the
+// document keeps following its theme when the theme is changed in Word.
+const DOCX_SLOT: Record<Slot, string> = {
+  dk1: 'dark1', lt1: 'light1', dk2: 'dark2', lt2: 'light2', accent1: 'accent1', accent2: 'accent2', accent3: 'accent3',
+  accent4: 'accent4', accent5: 'accent5', accent6: 'accent6', hlink: 'hyperlink', folHlink: 'followedHyperlink',
+}
+const themeColorOf = (slot: Slot, pct: number): Any =>
+  ({ theme: DOCX_SLOT[slot], ...(pct > 0 ? { lighter: pct } : pct < 0 ? { darker: -pct } : {}) })
+/** A run/shading colour: theme colour when linked to the theme, else plain hex. */
+function docxColor(c: string | null | undefined): Any {
+  const n = normalizeColor(c)
+  const ref = parseThemeRef(n)
+  return ref ? themeColorOf(ref.slot, ref.pct) : hex(n)
+}
+/** A style's colour ("accent1:-35"), theme-linked. */
+function styleColor(ref: ColorRef | undefined, fallback: string | undefined): Any {
+  if (!ref) return fallback ? fallback.slice(1).toUpperCase() : undefined
+  const [slot, pct] = ref.split(':')
+  return themeColorOf(slot as Slot, Number(pct || 0))
 }
 const firstFamily = (ff: string) => ff.split(',')[0].replace(/["']/g, '').trim()
 const pt2tw = (pt: number) => Math.round(pt * 20)
@@ -50,7 +73,7 @@ function styleDef(s: ParaStyle): Any {
     run: {
       font: s.font || DEFAULT_FONT,
       size: Math.round(s.sizePt * 2),
-      color: s.color ? s.color.slice(1).toUpperCase() : undefined,
+      color: styleColor(s.colorRef, s.color),
       bold: s.bold || false,
       italics: s.italic || false,
       characterSpacing: s.letterSpacingPt ? pt2tw(s.letterSpacingPt) : undefined,
@@ -141,7 +164,7 @@ function runOpts(marks: JSONContent['marks'] = []): Any {
       case 'superscript': o.superScript = true; break
       case 'code': o.font = 'Courier New'; o.shading = { type: ShadingType.CLEAR, fill: 'F1F3F3', color: 'auto' }; break
       case 'highlight': {
-        const c = normalizeColor(a.color) || '#ffff00'
+        const c = colorHex(a.color) || '#ffff00'
         if (HIGHLIGHT_NAMES[c]) o.highlight = HIGHLIGHT_NAMES[c]
         else o.shading = { type: ShadingType.CLEAR, fill: c.slice(1).toUpperCase(), color: 'auto' }
         break
@@ -150,9 +173,9 @@ function runOpts(marks: JSONContent['marks'] = []): Any {
         if (a.fontFamily) o.font = firstFamily(a.fontFamily)
         const pt = fontSizeToPt(a.fontSize)
         if (pt) o.size = Math.round(pt * 2)
-        const col = hex(a.color)
+        const col = docxColor(a.color)
         if (col) o.color = col
-        const bg = hex(a.backgroundColor)
+        const bg = docxColor(a.backgroundColor)
         if (bg) o.shading = { type: ShadingType.CLEAR, fill: bg, color: 'auto' }
         break
       }
@@ -203,7 +226,7 @@ function inlineRuns(node: JSONContent, ctx: Ctx, extra: Any = {}): Any[] {
                   ? (a.align === 'right' ? HorizontalPositionAlign.RIGHT : HorizontalPositionAlign.LEFT)
                   : a.align === 'left' ? HorizontalPositionAlign.LEFT : a.align === 'right' ? HorizontalPositionAlign.RIGHT : HorizontalPositionAlign.CENTER,
               },
-              verticalPosition: { relative: VerticalPositionRelativeFrom.PARAGRAPH, offset: 0 },
+              verticalPosition: { relative: VerticalPositionRelativeFrom.PARAGRAPH, offset: Math.round((a.y || 0) * 9525) },
               wrap: { type: a.wrap === 'square' ? TextWrappingType.SQUARE : TextWrappingType.TOP_AND_BOTTOM, side: TextWrappingSide.BOTH_SIDES },
               margins: { top: 8 * PT, bottom: 8 * PT, left: 8 * PT, right: 8 * PT },
               allowOverlap: false,
@@ -248,7 +271,7 @@ function paragraphProps(node: JSONContent, pc: ParaCtx): Any {
   if (Object.keys(indent).length) p.indent = indent
   if (a.pageBreakBefore) p.pageBreakBefore = true
   if (a.keepNext) p.keepNext = true
-  const sh = hex(a.shading)
+  const sh = docxColor(a.shading)
   if (sh) p.shading = { type: ShadingType.CLEAR, fill: sh, color: 'auto' }
   if (pc.list) p.numbering = pc.list
   return p
@@ -370,7 +393,7 @@ function convertTable(table: JSONContent, ctx: Ctx): Any {
         const kids = (cell.content || []).flatMap((b) => convertBlock(b, ctx))
         if (kids.length && kids[kids.length - 1] instanceof Table) kids.push(new Paragraph({ children: [] }))
         const isHeader = cell.type === 'tableHeader'
-        const bg = hex(ca.backgroundColor) || (isHeader ? 'E3F7F6' : undefined)
+        const bg = docxColor(ca.backgroundColor) || (isHeader ? themeColorOf('accent1', HEADER_TINT) : undefined)
         return new TableCell({
           children: kids.length ? kids : [new Paragraph({ children: [] })],
           columnSpan: span > 1 ? span : undefined,
@@ -465,7 +488,19 @@ export async function exportDocx(doc: JSONContent, settings: DocSettings, headin
 
   const byId = (id: string) => styleDef(PARA_STYLES.find((s) => s.id === id)!)
   const normal = PARA_STYLES[0]
+  const th = currentTheme
+  const up = (c: string) => c.slice(1).toUpperCase()
   const d = new Document({
+    theme: {
+      name: th.name,
+      colors: {
+        dark1: up(th.colors.dk1), light1: up(th.colors.lt1), dark2: up(th.colors.dk2), light2: up(th.colors.lt2),
+        accent1: up(th.colors.accent1), accent2: up(th.colors.accent2), accent3: up(th.colors.accent3),
+        accent4: up(th.colors.accent4), accent5: up(th.colors.accent5), accent6: up(th.colors.accent6),
+        hyperlink: up(th.colors.hlink), followedHyperlink: up(th.colors.folHlink),
+      },
+      fonts: { headings: th.fonts.major, body: th.fonts.minor },
+    },
     creator: settings.author || 'Grafi',
     title: settings.title || undefined,
     description: t('io.createdWith'),
@@ -479,7 +514,7 @@ export async function exportDocx(doc: JSONContent, settings: DocSettings, headin
         title: byId('Title'),
         heading1: byId('Heading1'), heading2: byId('Heading2'), heading3: byId('Heading3'),
         heading4: byId('Heading4'), heading5: byId('Heading5'), heading6: byId('Heading6'),
-        hyperlink: { run: { color: '117470', underline: {} } },
+        hyperlink: { run: { color: { theme: 'hyperlink' }, underline: {} } },
       } as Any,
       paragraphStyles: [
         { id: 'Subtitle', name: 'Subtitle', basedOn: 'Normal', next: 'Normal', quickFormat: true, ...byId('Subtitle') },

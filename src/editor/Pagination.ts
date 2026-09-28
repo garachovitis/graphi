@@ -44,7 +44,7 @@ export const paginationKey = new PluginKey<DecorationSet>('pagination')
  * propagates to the block's start (CSS Fragmentation), so its space-before must be
  * suppressed there — exactly what Word does for a paragraph at the top of a page.
  */
-interface Spacer { pos: number; height: number; block: boolean; top?: { from: number; to: number }; pad?: boolean; side?: 'odd' | 'even' }
+interface Spacer { pos: number; height: number; block: boolean; top?: { from: number; to: number }; pad?: boolean; padBase?: number; side?: 'odd' | 'even' }
 
 const CONTAINERS = new Set(['bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem', 'blockquote'])
 const TEXTBLOCKS = new Set(['paragraph', 'heading', 'codeBlock'])
@@ -64,10 +64,11 @@ function makeSpacerDom(height: number, block: boolean, side?: 'odd' | 'even') {
 function buildDecorations(doc: PMNode, spacers: Spacer[]) {
   const decos: Decoration[] = []
   for (const s of spacers) {
-    // A heading moved whole to the next page is pushed down with padding instead of an
-    // inline spacer, so its section number (::before) moves with it.
+    // A textblock moved whole to the next page is pushed down with padding instead of an
+    // inline spacer: the caret then can't sit in the gap between the sheets (it would be
+    // placed before a spacer widget), and a heading's section number (::before) moves with it.
     if (s.pad && s.top) {
-      decos.push(Decoration.node(s.top.from, s.top.to, { class: `pg-top pg-pad${s.side ? ` pg-${s.side}` : ''}`, style: `padding-top:${s.height}px` }))
+      decos.push(Decoration.node(s.top.from, s.top.to, { class: `pg-top pg-pad${s.side ? ` pg-${s.side}` : ''}`, style: `padding-top:${s.height + (s.padBase || 0)}px;--pg-base:${s.padBase || 0}px` }))
       continue
     }
     decos.push(Decoration.widget(s.pos, () => makeSpacerDom(s.height, s.block, s.side), {
@@ -100,6 +101,8 @@ interface Unit {
   breakBefore: boolean
   lines?: Line[]
   textTops?: number[]
+  /** the block's own padding-top (the page-push padding is added to it) */
+  padTop?: number
   /** Square-wrapped (floating) pictures anchored in this block, with the line they start on. */
   floats?: { t: number; b: number; line: number }[]
 }
@@ -149,6 +152,7 @@ function collectUnits(view: EditorView, f: Frame): Unit[] {
 function measureLines(u: Unit, f: Frame): Line[] {
   if (u.lines) return u.lines
   const cs = getComputedStyle(u.el)
+  u.padTop = parseFloat(cs.paddingTop) || 0
   u.contentTop = u.top + (parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth)) / 1
   u.contentBottom = u.bottom - (parseFloat(cs.paddingBottom) + parseFloat(cs.borderBottomWidth)) / 1
   const rects: Line[] = []
@@ -280,7 +284,8 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
     spacers.push({
       pos: lineStartPos(view, f, u, k), height: h, block: false,
       top: k === 0 ? { from: u.pos, to: u.pos + u.node.nodeSize } : undefined,
-      pad: k === 0 && u.heading,
+      pad: k === 0,
+      padBase: k === 0 ? u.padTop : undefined,
       side: k === 0 ? forceSide : undefined,
     })
     shift += h
@@ -458,7 +463,11 @@ export const Pagination = Extension.create({
             }
             layoutStore.lastLayoutMs = performance.now() - t0
             layoutStore.set(result.pages, result.headings)
-            if (!sameSpacers(result.spacers, current)) {
+            // Also re-apply when the decorations were lost although the layout is the same:
+            // a block whose type changes (paragraph → heading) is replaced, and its page-push goes with it.
+            const want = result.spacers.reduce((n, sp) => n + (sp.pad && sp.top ? 1 : sp.top ? 2 : 1), 0)
+            const have = paginationKey.getState(view.state)?.find().length ?? 0
+            if (!sameSpacers(result.spacers, current) || have !== want) {
               current = result.spacers
               view.dispatch(view.state.tr.setMeta(paginationKey, current).setMeta('addToHistory', false))
             }

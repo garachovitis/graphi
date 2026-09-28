@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('grafiNative', {
   saveFile: (opts) => ipcRenderer.invoke('file:save', opts),
   renderPdf: () => ipcRenderer.invoke('pdf:render'),
   print: () => ipcRenderer.invoke('print'),
+  captureWindow: () => ipcRenderer.invoke('screen:capture'),
   setWindowState: (s) => ipcRenderer.invoke('win:state', s),
   newWindow: (p) => ipcRenderer.invoke('win:new', p),
   closeNow: () => ipcRenderer.invoke('win:close-now'),

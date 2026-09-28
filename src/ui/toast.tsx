@@ -1,17 +1,20 @@
-// Lightweight notifications (bottom-right).
+// Lightweight notifications (bottom-right). A toast may carry one action (e.g. "Undo").
 import { useEffect, useState } from 'react'
 
-interface T { id: number; text: string; kind: 'info' | 'warn' }
+interface ToastAction { label: string; run: () => void }
+interface T { id: number; text: string; kind: 'info' | 'warn'; action?: ToastAction }
 let items: T[] = []
 let nextId = 1
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((l) => l())
+const dismiss = (id: number) => { items = items.filter((t) => t.id !== id); emit() }
 
-export function toast(text: string, kind: 'info' | 'warn' = 'info') {
+export function toast(text: string, kind: 'info' | 'warn' = 'info', action?: ToastAction) {
   const id = nextId++
-  items = [...items, { id, text, kind }]
+  items = [...items, { id, text, kind, action }]
   emit()
-  setTimeout(() => { items = items.filter((t) => t.id !== id); emit() }, kind === 'warn' ? 7000 : 3500)
+  // Toasts with an action stay long enough to reach the button.
+  setTimeout(() => dismiss(id), kind === 'warn' || action ? 7000 : 3500)
 }
 
 export function Toasts() {
@@ -23,7 +26,16 @@ export function Toasts() {
   }, [])
   return (
     <div className="toasts no-print" role="status" aria-live="polite">
-      {items.map((t) => <div key={t.id} className={`toast ${t.kind}`}>{t.text}</div>)}
+      {items.map((t) => (
+        <div key={t.id} className={`toast ${t.kind}${t.action ? ' has-action' : ''}`}>
+          <span>{t.text}</span>
+          {t.action && (
+            <button type="button" className="toast-action" onMouseDown={(e) => e.preventDefault()} onClick={() => { dismiss(t.id); t.action!.run() }}>
+              {t.action.label}
+            </button>
+          )}
+        </div>
+      ))}
     </div>
   )
 }

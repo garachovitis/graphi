@@ -46,6 +46,27 @@ const ptAttr = (cssProp: 'marginTop' | 'marginBottom' | 'marginLeft' | 'marginRi
 
 export const ParagraphFormat = Extension.create({
   name: 'paragraphFormat',
+  // Above the core keymap, so Enter at the end of a caption is ours.
+  priority: 1000,
+
+  addKeyboardShortcuts() {
+    return {
+      // Like Word's "Style for following paragraph": Enter at the end of a caption continues with
+      // plain Normal text instead of another numbered caption.
+      Enter: () => {
+        const { $from, empty } = this.editor.state.selection
+        const p = $from.parent
+        if (!empty || p.type.name !== 'paragraph' || $from.parentOffset !== p.content.size) return false
+        if (!p.attrs.captionKind && p.attrs.styleId !== 'Caption') return false
+        return this.editor.chain().splitBlock().command(({ tr }) => {
+          const pos = tr.selection.$from.before()
+          const n = tr.doc.nodeAt(pos)
+          if (n) tr.setNodeMarkup(pos, undefined, { ...n.attrs, styleId: null, captionKind: null, keepNext: false, textAlign: null })
+          return true
+        }).run()
+      },
+    }
+  },
 
   addGlobalAttributes() {
     return [

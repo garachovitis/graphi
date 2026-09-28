@@ -147,6 +147,8 @@ const ICONS: Record<string, () => ReactElement> = {
   valign: () => <><rect x={4} y={4} width={24} height={24} rx={3} fill={C.paper} stroke={C.edge} strokeWidth={1.2} /><rect x={8} y={14} width={16} height={4} rx={2} fill={C.primary} /><path d="M16 6v5m0 10v5" stroke={C.edge} strokeWidth={1.2} /></>,
   deleteTable: () => <><Grid x={2} y={3} w={22} h={17} /><Badge cx={24} cy={24} r={6} fill={C.red}><path d="M21.5 21.5l5 5m0-5-5 5" stroke="#fff" strokeWidth={1.8} /></Badge></>,
   // ── App ──
+  shapes: () => <><rect x={3} y={4} width={15} height={13} rx={1.5} fill={C.blue} /><circle cx={21} cy={19} r={8} fill={C.primary} /><path d="M9 29l6-10 6 10z" fill={C.orange} /></>,
+  lineWeight: () => <><rect x={4} y={6} width={24} height={1.4} rx={0.7} fill={C.ink} /><rect x={4} y={12} width={24} height={2.6} rx={1.3} fill={C.ink} /><rect x={4} y={19.5} width={24} height={4.5} rx={2} fill={C.primary} /></>,
   file: () => <><Page x={6} y={2} w={20} h={28} fill={C.light} /><path d="M20 2v6h6" fill={C.primary} /><Lines x={9} y={13} w={14} n={4} color={C.dark} /></>,
 }
 

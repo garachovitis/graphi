@@ -5,12 +5,15 @@ import { Undo2, Redo2, Save, Menu } from 'lucide-react'
 import type { Editor } from '@tiptap/core'
 import type { AppApi } from './App'
 import { Popover, ColorGrid, MenuItem, MenuSep, MenuTitle } from './controls'
-import { PARA_STYLES, STYLE_SETS, applyStyleSet, currentStyleSet, styleName } from '../model/styles'
+import { PARA_STYLES, STYLE_SETS, applyStyleSet, currentStyleSet, styleName, fontStack } from '../model/styles'
+import { ThemesMenu, ColorsMenu, FontsMenu, ThemeThumb } from './ThemeTools'
 import { currentStyle, currentFontSizePt, growFont } from '../editor/format'
 import { MARGIN_PRESETS, PAPER_SIZES, withOrientation, withPaper, mmToPx } from '../model/settings'
 import { IMG_ASPECTS, IMG_SHADOWS, IMG_SHAPES, displaySize, type ImgAttrs } from '../editor/image'
 import { insertCaption } from './Ribbon'
 import { Ill } from './illustrations'
+import { ShapeGallery, insertShape, changeKind } from './ShapeTools'
+import { isLine, shapeSrc, type VShape } from '../editor/shapes'
 import { t, numText } from '../i18n'
 
 type MTab = 'home' | 'insert' | 'layout' | 'refs' | 'view' | 'table' | 'picture'
@@ -46,7 +49,7 @@ export function MobileRibbon({ api }: { api: AppApi }) {
   const shown: MTab = (tab === 'table' && !inTable) || (tab === 'picture' && !onImage) ? 'home' : tab
   const tabs: [MTab, string][] = [['home', t('tab.home')], ['insert', t('tab.insert')]]
   if (inTable) tabs.push(['table', t('tab.table')])
-  if (onImage) tabs.push(['picture', t('m.picture')])
+  if (onImage) tabs.push(['picture', e.getAttributes('image').vshape ? t('m.shapes') : t('m.picture')])
   tabs.push(['layout', t('tab.layout')], ['refs', t('tab.references')], ['view', t('tab.view')])
 
   return (
@@ -100,7 +103,7 @@ function Home({ api }: { api: AppApi }) {
       <MBtn icon={<Ill name="shrink" size={S} />} label={t('m.sizeDown', { size: numText(currentFontSizePt(e)) })} onClick={() => growFont(e, -1)} />
       <MBtn icon={<Ill name="grow" size={S} />} label={t('m.sizeUp')} onClick={() => growFont(e, 1)} />
       <MDrop icon={<Ill name="color" size={S} />} label={t('m.color')}>
-        {(close) => <ColorGrid onPick={(col) => { if (col) c().setColor(col).run(); else c().unsetColor().run(); close() }} />}
+        {(close) => <ColorGrid linkTheme value={e.getAttributes('textStyle').color} onPick={(col) => { if (col) c().setColor(col).run(); else c().unsetColor().run(); close() }} />}
       </MDrop>
       <MDrop icon={<Ill name="highlight" size={S} />} label={t('m.highlight')} active={e.isActive('highlight')}>
         {(close) => <ColorGrid highlight onPick={(col) => { if (col) c().setHighlight({ color: col }).run(); else c().unsetHighlight().run(); close() }} />}
@@ -132,6 +135,9 @@ function Insert({ api }: { api: AppApi }) {
   return (
     <>
       <MBtn icon={<Ill name="image" size={S} />} label={t('m.picture')} onClick={api.pickImage} />
+      <MDrop icon={<Ill name="shapes" size={S} />} label={t('m.shapes')}>
+        {(close) => <ShapeGallery onPick={(k) => { close(); insertShape(e, k) }} />}
+      </MDrop>
       <MBtn icon={<Ill name="signature" size={S} />} label={t('ins.signature')} onClick={() => api.openDialog({ type: 'signature' })} />
       <MDrop icon={<Ill name="table" size={S} />} label={t('ins.table')}>
         {(close) => (
@@ -185,6 +191,15 @@ function Layout({ api }: { api: AppApi }) {
       <MDrop icon={<Ill name="styleSets" size={S} />} label={t('m.styleSets')}>
         {(close) => <>{STYLE_SETS.map((set) => <MenuItem key={set.id} label={set.name} active={currentStyleSet === set.id} onClick={() => { applyStyleSet(set.id); api.setSettings({ ...s, styleSet: set.id }); close() }} />)}</>}
       </MDrop>
+      <MDrop icon={<ThemeThumb theme={s.theme} size="sm" />} label={t('design.themes')}>
+        {(close) => <ThemesMenu api={api} close={close} />}
+      </MDrop>
+      <MDrop icon={<span className="colors-ill m" aria-hidden>{(['accent1', 'accent2', 'accent3', 'accent4'] as const).map((k) => <i key={k} style={{ background: s.theme.colors[k] }} />)}</span>} label={t('design.colors')}>
+        {(close) => <ColorsMenu api={api} close={close} />}
+      </MDrop>
+      <MDrop icon={<span className="fonts-ill m" aria-hidden style={{ fontFamily: fontStack(s.theme.fonts.major) }}>Aa</span>} label={t('design.fonts')}>
+        {(close) => <FontsMenu api={api} close={close} />}
+      </MDrop>
     </>
   )
 }
@@ -229,7 +244,7 @@ function TableTools({ e }: { e: Editor }) {
       <MBtn icon={<Ill name="delCol" size={S} />} label={t('m.delCol')} onClick={() => c().deleteColumn().run()} />
       <MBtn icon={<Ill name="merge" size={S} />} label={t('m.merge')} disabled={!e.can().mergeCells()} onClick={() => c().mergeCells().run()} />
       <MDrop icon={<Ill name="shading" size={S} />} label={t('tbl.shading')}>
-        {(close) => <ColorGrid autoLabel={t('color.none')} onPick={(col) => { c().setCellAttribute('backgroundColor', col).run(); close() }} />}
+        {(close) => <ColorGrid linkTheme autoLabel={t('color.none')} onPick={(col) => { c().setCellAttribute('backgroundColor', col).run(); close() }} />}
       </MDrop>
       <MBtn icon={<Ill name="headerRow" size={S} />} label={t('m.headerRow')} onClick={() => c().toggleHeaderRow().run()} />
       <MBtn icon={<Ill name="delete" size={S} />} label={t('tbl.delTable')} onClick={() => c().deleteTable().run()} />
@@ -242,6 +257,8 @@ function PictureTools({ api }: { api: AppApi }) {
   const a = e.getAttributes('image') as ImgAttrs
   const set = (patch: Partial<ImgAttrs>) => e.chain().focus().updateAttributes('image', patch).run()
   const box = displaySize(a)
+  const v = a.vshape as VShape | null | undefined
+  const setV = (nv: VShape) => set({ vshape: nv, src: shapeSrc(nv, box.w, box.h) })
   const colW = mmToPx(api.settings.width - api.settings.margins.left - api.settings.margins.right)
   const resize = (k: number) => {
     const w = Math.max(24, Math.min(colW, Math.round(box.w * k)))
@@ -260,7 +277,22 @@ function PictureTools({ api }: { api: AppApi }) {
           </>
         )}
       </MDrop>
-      <MDrop icon={<Ill name="shape" size={S} />} label={t('m.shape')}>
+      {v && (
+        <>
+          <MDrop icon={<Ill name="shapes" size={S} />} label={t('shp.change')}>
+            {(close) => <ShapeGallery current={v.k} v={v} onPick={(k) => { setV(changeKind(v, k)); close() }} />}
+          </MDrop>
+          {!isLine(v.k) && (
+            <MDrop icon={<Ill name="shading" size={S} />} label={t('shp.fill')}>
+              {(close) => <ColorGrid autoLabel={t('shp.noFill')} onPick={(c) => { setV({ ...v, fill: c }); close() }} />}
+            </MDrop>
+          )}
+          <MDrop icon={<Ill name="color" size={S} />} label={isLine(v.k) ? t('shp.lineColor') : t('shp.line')}>
+            {(close) => <ColorGrid autoLabel={isLine(v.k) ? undefined : t('shp.noLine')} onPick={(c) => { setV({ ...v, line: c ?? (isLine(v.k) ? '#243B3A' : null) }); close() }} />}
+          </MDrop>
+        </>
+      )}
+      {!v && <MDrop icon={<Ill name="shape" size={S} />} label={t('m.shape')}>
         {(close) => (
           <>
             <MenuTitle>{t('g.cropShape')}</MenuTitle>
@@ -270,10 +302,10 @@ function PictureTools({ api }: { api: AppApi }) {
             {IMG_ASPECTS.map((x) => <MenuItem key={x.label} label={x.label} active={(a.aspect || null) === x.id} onClick={() => { set({ aspect: x.id, focusX: 50, focusY: 50 }); close() }} />)}
           </>
         )}
-      </MDrop>
-      <MDrop icon={<Ill name="shadow" size={S} />} label={t('g.shadow')} active={!!a.shadow && a.shadow !== 'none'}>
+      </MDrop>}
+      {!v && <MDrop icon={<Ill name="shadow" size={S} />} label={t('g.shadow')} active={!!a.shadow && a.shadow !== 'none'}>
         {(close) => <>{IMG_SHADOWS.map((s) => <MenuItem key={s.id} label={s.label} active={(a.shadow || 'none') === s.id} onClick={() => { set({ shadow: s.id }); close() }} />)}</>}
-      </MDrop>
+      </MDrop>}
       <MBtn icon={<Ill name="smaller" size={S} />} label={t('m.smaller')} onClick={() => resize(0.9)} />
       <MBtn icon={<Ill name="bigger" size={S} />} label={t('m.bigger')} onClick={() => resize(1.1)} />
       <MBtn icon={<Ill name="delete" size={S} />} label={t('common.delete')} onClick={() => e.chain().focus().deleteSelection().run()} />

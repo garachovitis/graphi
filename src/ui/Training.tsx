@@ -967,7 +967,6 @@ export function TrainingCoach({ api, lessonId, hidden, onClose }: { api: AppApi;
         <div className="tr-head">
           <span className={`tr-level${lesson.pro ? ' pro' : ''}`}>{levelLabel(lesson)}</span>
           <span className="tr-count">{step >= 0 ? t('tr.step', { step: step + 1, total: steps.length }) : ''}</span>
-          <span className="tr-points" title={t('tr.pointsTitle')}>⭐ {score}</span>
           <button className="tr-mini" onClick={() => setSmall(true)} title={t('tr.minimize')}>—</button>
           <button className="tr-mini" onClick={onClose} title={t('tr.end')}>✕</button>
         </div>

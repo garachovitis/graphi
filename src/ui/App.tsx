@@ -7,7 +7,8 @@ import { editorExtensions } from '../editor/extensions'
 import { paginationConfig, requestRelayout } from '../editor/Pagination'
 import { layoutStore } from '../editor/layoutStore'
 import { DEFAULT_SETTINGS, mmToPx, normalizeSettings, type DocSettings } from '../model/settings'
-import { applyStyleSet } from '../model/styles'
+import { applyDesign } from '../model/styles'
+import { userDefaultDesign, type DocTheme } from '../model/themes'
 import { pageCss, printCss, surfaceCss } from '../model/docCss'
 import { TEMPLATES } from '../model/templates'
 import { baseName, kindOf, type Kind } from '../io/kinds'
@@ -32,12 +33,22 @@ import { Toasts, toast } from './toast'
 import { TrainingCoach, lessonDoc } from './Training'
 import { t, tAll, fmtDate, setLang, useLang } from '../i18n'
 
+export interface DesignPreview { theme?: DocTheme; styleSet?: string }
+
+/** A blank document in the user's default design (Design ▸ Set as Default). */
+export function blankSettings(): DocSettings {
+  const d = userDefaultDesign()
+  return normalizeSettings({ ...DEFAULT_SETTINGS, ...(d ? { theme: d.theme, styleSet: d.styleSet } : {}) })
+}
+
 export interface FileInfo { path: string | null; name: string; kind: Kind | null }
 
 export interface AppApi {
   editor: Editor
   settings: DocSettings
   setSettings: (s: DocSettings) => void
+  /** Live preview of a theme / style set while the pointer rests on a gallery item (null ends it). */
+  previewDesign: (p: DesignPreview | null) => void
   file: FileInfo
   dirty: boolean
   view: 'print' | 'web'
@@ -84,7 +95,7 @@ let untitled = 1
 export function App() {
   // Re-render the whole UI when the display language changes.
   const lang = useLang()
-  const [settings, setSettingsRaw] = useState<DocSettings>(DEFAULT_SETTINGS)
+  const [settings, setSettingsRaw] = useState<DocSettings>(blankSettings)
   const [file, setFile] = useState<FileInfo>(() => ({ path: null, name: t('app.docName', { n: String(untitled) }), kind: null }))
   const [dirty, setDirty] = useState(false)
   const [view, setView] = useState<'print' | 'web'>('print')
@@ -103,14 +114,19 @@ export function App() {
   const fileInput = useRef<HTMLInputElement>(null)
   const pendingImagePos = useRef<number | undefined>(undefined)
 
+  const [preview, setPreview] = useState<DesignPreview | null>(null)
   const setSettings = useCallback((s: DocSettings) => {
+    setPreview(null)
     setSettingsRaw(s)
     setDirty(true)
     pristine.current = false
   }, [])
 
-  // Style set must be applied before children render the gallery / CSS.
-  useMemo(() => applyStyleSet(settings.styleSet), [settings.styleSet])
+  // Design (style set + theme) must be applied before children render the gallery / CSS.
+  // A gallery hover previews a design without committing it (Word's live preview).
+  const designSet = preview?.styleSet ?? settings.styleSet
+  const designTheme = preview?.theme ?? settings.theme
+  useMemo(() => applyDesign(designSet, designTheme), [designSet, designTheme])
 
   const insertImageFilesRef = useRef<(files: File[] | FileList, pos?: number) => void>(() => {})
 
@@ -182,7 +198,7 @@ export function App() {
     // 1px safety so Chromium's print engine never breaks earlier than we do.
     paginationConfig.contentHeight = mmToPx(settings.height - settings.margins.top - settings.margins.bottom) - 1
     requestRelayout()
-  }, [settings, view, lang])
+  }, [settings, view, lang, designSet, designTheme])
 
   useEffect(() => {
     paginationConfig.scale = zoom
@@ -216,7 +232,8 @@ export function App() {
   const loadInto = useCallback((loaded: Loaded, info: FileInfo) => {
     if (!editor) return
     const s = normalizeSettings(loaded.settings)
-    applyStyleSet(s.styleSet)
+    applyDesign(s.styleSet, s.theme)
+    setPreview(null)
     setSettingsRaw(s)
     if (loaded.doc) editor.commands.setContent(loaded.doc, { emitUpdate: false })
     else editor.commands.setContent(loaded.html || '', { emitUpdate: false })
@@ -264,7 +281,8 @@ export function App() {
     const tpl = TEMPLATES.find((t) => t.id === id) || TEMPLATES[0]
     const start = () => {
       untitled++
-      const s = normalizeSettings({ ...DEFAULT_SETTINGS, ...(tpl.settings || {}) })
+      // Templates without a theme get the one their style set was designed with.
+      const s = tpl.id === 'blank' ? blankSettings() : normalizeSettings({ ...DEFAULT_SETTINGS, theme: undefined, ...(tpl.settings || {}) } as Partial<DocSettings>)
       loadInto({ doc: tpl.doc(), settings: s, warnings: [] }, { path: null, name: t('app.docName', { n: String(untitled) }), kind: null })
       pristine.current = tpl.id === 'blank'
     }
@@ -535,7 +553,7 @@ export function App() {
   if (!editor) return null
 
   const api: AppApi = {
-    editor, settings, setSettings, file, dirty, view, setView, zoom, setZoom, showRuler, setShowRuler, showMarks, setShowMarks,
+    editor, settings, setSettings, previewDesign: setPreview, file, dirty, view, setView, zoom, setZoom, showRuler, setShowRuler, showMarks, setShowMarks,
     spellcheck, setSpellcheck, openDialog: setDialog, openFind: setFind, openBackstage: setBackstage, painter, startPainter, run,
     insertImageFiles, pickImage, newFromTemplate, openFile, openPath, save, saveAs, exportPdf, print, training, startTraining,
   }

@@ -2,7 +2,8 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactElement } from 'react'
 import { generateHTML } from '@tiptap/core'
 import { schemaExtensions } from '../editor/extensions'
-import { applyStyleSet, currentStyleSet, stylesCss } from '../model/styles'
+import { applyDesign, currentStyleSet, stylesCss } from '../model/styles'
+import { currentTheme, themeVarsCss } from '../model/themes'
 import { DEFAULT_SETTINGS, mmToPx, normalizeSettings } from '../model/settings'
 import { ArrowLeft, FilePlus, FolderOpen, Save, SaveAll, Printer, FileOutput, Info, X, FileText, Settings, Check, ChevronRight, GraduationCap } from 'lucide-react'
 import type { JSONContent } from '@tiptap/core'
@@ -368,12 +369,12 @@ function DocThumb({ id, doc, settings, width = 150 }: { id: string; doc: () => J
     const key = `${getLang()}:${id}`
     const hit = thumbCache.get(key)
     if (hit) return hit
-    const st = normalizeSettings({ ...DEFAULT_SETTINGS, ...(settings || {}) })
-    const prev = currentStyleSet
-    applyStyleSet(st.styleSet)
+    const st = normalizeSettings({ ...DEFAULT_SETTINGS, theme: undefined, ...(settings || {}) } as Partial<DocSettings>)
+    const prev = [currentStyleSet, currentTheme] as const
+    applyDesign(st.styleSet, st.theme)
     const scope = `.tpl-${id} .doc-surface`
-    const css = stylesCss(scope)
-    applyStyleSet(prev)
+    const css = `${scope}{${themeVarsCss(st.theme)}}\n${stylesCss(scope)}`
+    applyDesign(...prev)
     const html = generateHTML(doc(), schemaExtensions())
       .replace(/<div data-toc[^>]*><\/div>/g, `<div class="toc"><div class="toc-title">${t('toc.title')}</div></div>`)
     const m = st.margins

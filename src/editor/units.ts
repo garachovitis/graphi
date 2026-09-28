@@ -1,4 +1,5 @@
 // Parse CSS lengths (as found in pasted Word/LibreOffice HTML) into points.
+import { parseThemeRef, resolveColor, themeVar } from '../model/themes'
 
 export function cssToPt(value: string | null | undefined, fontSizePt = 11): number | null {
   if (value == null) return null
@@ -51,6 +52,9 @@ export function fontSizeToPt(value: string | null | undefined): number | null {
 
 export function normalizeColor(c: string | null | undefined): string | null {
   if (!c) return null
+  // Theme colours stay linked to the theme (canonical form, fresh fallback).
+  const ref = parseThemeRef(c)
+  if (ref) return themeVar(ref.slot, ref.pct)
   const v = c.trim().toLowerCase()
   if (!v || v === 'auto' || v === 'inherit' || v === 'initial' || v === 'transparent' || v === 'windowtext') return null
   const rgb = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?\s*\)$/.exec(v)
@@ -60,4 +64,12 @@ export function normalizeColor(c: string | null | undefined): string | null {
   }
   if (/^#[0-9a-f]{3}$/.test(v)) return '#' + v.slice(1).split('').map((x) => x + x).join('')
   return v
+}
+
+/** A colour as plain #rrggbb for exporters: theme colours resolve against the current theme. */
+export function colorHex(c: string | null | undefined): string | null {
+  const n = normalizeColor(c)
+  if (!n) return null
+  const h = resolveColor(n)
+  return /^#[0-9a-f]{6}$/i.test(h) ? h.toLowerCase() : n
 }

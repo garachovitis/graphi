@@ -1,6 +1,7 @@
 // Named paragraph styles (the Word "Styles" gallery). Single source of truth used by
 // the editor CSS, HTML export, and DOCX import/export so all renderings agree.
 import { t, type Key } from '../i18n'
+import { BUILTIN_THEMES, cloneTheme, currentTheme, refColor, setCurrentTheme, type ColorRef, type DocTheme } from './themes'
 
 export interface ParaStyle {
   id: string // DOCX styleId (the UI label comes from styleName())
@@ -10,6 +11,8 @@ export interface ParaStyle {
   font?: string // family name (first in stack)
   sizePt: number
   color?: string
+  /** Theme colour the style uses (set by applyDesign), e.g. "accent1:-35". */
+  colorRef?: ColorRef
   bold?: boolean
   italic?: boolean
   spaceBeforePt: number
@@ -102,56 +105,89 @@ export function stylesCss(scope: string): string {
 }
 
 // ───────────── Style sets (Word's Design ▸ Document Formatting) ─────────────
+// A style set is structure only (weights, sizes, alignment and *which* theme colour each
+// element uses); the colours and fonts themselves come from the document theme.
 export interface StyleSet {
   id: string
   readonly name: string
-  bodyFont: string
-  headingFont: string
-  titleColor: string
-  h1: string
-  h2: string
-  h3: string
+  /** Title / Heading 1–3 use the theme's heading font, or its body font. */
+  headingFont: 'major' | 'minor'
+  titleColor: ColorRef
+  h1: ColorRef
+  h2: ColorRef
+  h3: ColorRef
   headingBold: boolean
   titleSize: number
   h1Size: number
   titleAlign?: 'left' | 'center'
-  subtitleColor: string
+  subtitleColor: ColorRef
 }
 
+const set = (id: string, v: Omit<StyleSet, 'id' | 'name'>): StyleSet => ({ id, get name() { return t(`set.${id}` as Key) }, ...v })
 export const STYLE_SETS: StyleSet[] = [
-  { id: 'teal', get name() { return t('set.teal') }, bodyFont: 'Calibri', headingFont: 'Calibri Light', titleColor: '#0D4745', h1: '#117470', h2: '#13928C', h3: '#0D4745', headingBold: false, titleSize: 28, h1Size: 16, subtitleColor: '#5A5A5A' },
-  { id: 'office', get name() { return t('set.office') }, bodyFont: 'Calibri', headingFont: 'Calibri Light', titleColor: '#000000', h1: '#2F5496', h2: '#2F5496', h3: '#1F3763', headingBold: false, titleSize: 28, h1Size: 16, subtitleColor: '#5A5A5A' },
-  { id: 'mono', get name() { return t('set.mono') }, bodyFont: 'Calibri', headingFont: 'Calibri', titleColor: '#000000', h1: '#000000', h2: '#262626', h3: '#404040', headingBold: true, titleSize: 26, h1Size: 16, subtitleColor: '#595959' },
-  { id: 'modern', get name() { return t('set.modern') }, bodyFont: 'Arial', headingFont: 'Arial', titleColor: '#117470', h1: '#117470', h2: '#115A57', h3: '#0D4745', headingBold: true, titleSize: 26, h1Size: 15, subtitleColor: '#13928C' },
-  { id: 'formal', get name() { return t('set.formal') }, bodyFont: 'Tahoma', headingFont: 'Tahoma', titleColor: '#1F2937', h1: '#1F2937', h2: '#374151', h3: '#4B5563', headingBold: true, titleSize: 24, h1Size: 14, titleAlign: 'center', subtitleColor: '#6B7280' },
-  { id: 'fresh', get name() { return t('set.fresh') }, bodyFont: 'Calibri', headingFont: 'Calibri', titleColor: '#1AB3AC', h1: '#13928C', h2: '#1AB3AC', h3: '#117470', headingBold: true, titleSize: 30, h1Size: 18, subtitleColor: '#14B8A6' },
+  set('teal', { headingFont: 'major', titleColor: 'dk2', h1: 'accent1:-35', h2: 'accent1:-18', h3: 'dk2', headingBold: false, titleSize: 28, h1Size: 16, subtitleColor: 'dk1:+35' }),
+  set('office', { headingFont: 'major', titleColor: 'dk1', h1: 'accent1:-25', h2: 'accent1:-25', h3: 'accent1:-50', headingBold: false, titleSize: 28, h1Size: 16, subtitleColor: 'dk1:+35' }),
+  set('mono', { headingFont: 'minor', titleColor: 'dk1', h1: 'dk1', h2: 'dk1:+15', h3: 'dk1:+25', headingBold: true, titleSize: 26, h1Size: 16, subtitleColor: 'dk1:+35' }),
+  set('modern', { headingFont: 'major', titleColor: 'accent1:-35', h1: 'accent1:-35', h2: 'accent1:-50', h3: 'dk2', headingBold: true, titleSize: 26, h1Size: 15, subtitleColor: 'accent1:-18' }),
+  set('formal', { headingFont: 'major', titleColor: 'dk1:+12', h1: 'dk1:+12', h2: 'dk1:+22', h3: 'dk1:+30', headingBold: true, titleSize: 24, h1Size: 14, titleAlign: 'center', subtitleColor: 'dk1:+42' }),
+  set('fresh', { headingFont: 'minor', titleColor: 'accent1', h1: 'accent1:-18', h2: 'accent1', h3: 'accent1:-35', headingBold: true, titleSize: 30, h1Size: 18, subtitleColor: 'accent1:-10' }),
 ]
+
+/**
+ * Documents saved before themes existed carry only a style-set id. This is the theme that
+ * reproduces how that style set used to look (its colours and fonts were built in).
+ */
+export function legacyTheme(styleSet: string): DocTheme {
+  const base = cloneTheme(BUILTIN_THEMES.find((x) => x.id === (styleSet === 'office' ? 'office' : 'grafi'))!)
+  if (styleSet === 'modern') base.fonts = { major: 'Arial', minor: 'Arial' }
+  if (styleSet === 'formal') base.fonts = { major: 'Tahoma', minor: 'Tahoma' }
+  return base
+}
+
+/** The concrete look of a style set under a theme (gallery previews and the styles below). */
+export function resolveSet(s: StyleSet, th: DocTheme = currentTheme) {
+  const headingFont = s.headingFont === 'major' ? th.fonts.major : th.fonts.minor
+  return {
+    headingFont, bodyFont: th.fonts.minor,
+    title: refColor(s.titleColor, th), h1: refColor(s.h1, th), h2: refColor(s.h2, th), h3: refColor(s.h3, th), subtitle: refColor(s.subtitleColor, th),
+    // Light faces are drawn light: bold "Calibri Light" is not what Word shows.
+    titleBold: s.headingBold && headingFont !== 'Calibri Light',
+    headingBold: s.headingBold,
+  }
+}
 
 const BASE_STYLES: ParaStyle[] = PARA_STYLES.map((s) => ({ ...s }))
 export let currentStyleSet = 'teal'
 
-/** Mutates PARA_STYLES in place so every renderer/exporter picks the set up. */
-export function applyStyleSet(id: string) {
+/** Mutates PARA_STYLES in place so every renderer/exporter picks the design up. */
+export function applyDesign(id: string, theme: DocTheme = currentTheme) {
   const set = STYLE_SETS.find((s) => s.id === id) || STYLE_SETS[0]
   currentStyleSet = set.id
-  PARA_STYLES.forEach((s, i) => Object.assign(s, BASE_STYLES[i]))
+  setCurrentTheme(theme)
+  const r = resolveSet(set, theme)
+  const body = r.bodyFont === DEFAULT_FONT ? undefined : r.bodyFont
+  const color = (s: ParaStyle, ref: ColorRef) => { s.color = refColor(ref, theme); s.colorRef = ref }
+  PARA_STYLES.forEach((s, i) => { Object.assign(s, BASE_STYLES[i]); delete s.colorRef })
   for (const s of PARA_STYLES) {
-    if (s.id === 'Normal' || s.id === 'NoSpacing' || s.id === 'Quote' || s.id === 'Subtitle') s.font = set.bodyFont === 'Calibri' ? undefined : set.bodyFont
-    if (s.id === 'Subtitle') s.color = set.subtitleColor
-    if (s.id === 'Caption') s.color = set.h3
+    if (s.id === 'Normal' || s.id === 'NoSpacing' || s.id === 'Quote' || s.id === 'Subtitle' || s.id === 'Caption') s.font = body
+    if (s.id === 'Subtitle') color(s, set.subtitleColor)
+    if (s.id === 'Caption') color(s, set.h3)
+    if (s.id === 'Quote') color(s, 'dk1:+25')
     if (s.id === 'Title') {
-      s.font = set.headingFont; s.color = set.titleColor; s.sizePt = set.titleSize; s.bold = set.headingBold && set.headingFont !== 'Calibri Light'
+      s.font = r.headingFont; color(s, set.titleColor); s.sizePt = set.titleSize; s.bold = r.titleBold
       s.align = set.titleAlign
     }
     if (s.node === 'heading') {
       const lvl = s.level!
-      s.color = lvl === 1 ? set.h1 : lvl === 2 || lvl === 4 || lvl === 5 ? set.h2 : set.h3
-      s.font = lvl <= 3 ? set.headingFont : set.bodyFont === 'Calibri' ? undefined : set.bodyFont
+      color(s, lvl === 1 ? set.h1 : lvl === 2 || lvl === 4 || lvl === 5 ? set.h2 : set.h3)
+      s.font = lvl <= 3 ? r.headingFont : body
       s.bold = set.headingBold
       if (lvl === 1) s.sizePt = set.h1Size
     }
   }
 }
+/** Switches the style set, keeping the current theme. */
+export const applyStyleSet = (id: string) => applyDesign(id, currentTheme)
 
 export const bodyFont = () => PARA_STYLES[0].font || DEFAULT_FONT
 

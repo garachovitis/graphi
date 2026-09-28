@@ -2,20 +2,26 @@
 // everything else lives one click away in a "More" menu or a dialog.
 // Contextual tabs (Table / Picture Format) appear right after Insert.
 // Every label comes from src/i18n (Word's terminology in Greek and English).
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Editor } from '@tiptap/core'
 import { NodeSelection } from '@tiptap/pm/state'
+import type { Node as PMNode } from '@tiptap/pm/model'
 import {
-  Undo2, Redo2, Save, Search, FileText,
+  Undo2, Redo2, Save, FileText,
 } from 'lucide-react'
+import { ThemesMenu, ColorsMenu, FontsMenu, StyleSetGallery, ThemeThumb } from './ThemeTools'
+import { fontPairName, themeName, currentTheme, resolveColor } from '../model/themes'
 import { Btn, Group, Row, Col, Dropdown, MenuItem, MenuSep, MenuTitle, ColorGrid, Combo, NumField, Popover as PopoverList } from './controls'
 import type { AppApi } from './App'
-import { FONT_CHOICES, PARA_STYLES, STYLE_SETS, fontStack, applyStyleSet, currentStyleSet, styleName, type ParaStyle } from '../model/styles'
+import { FONT_CHOICES, PARA_STYLES, fontStack, styleName, type ParaStyle } from '../model/styles'
 import { FONT_SIZES, currentFontFamily, currentFontSizePt, currentStyle, growFont, setFontSizePt, changeCase } from '../editor/format'
 import { BULLET_FORMATS, NUMBER_FORMATS } from '../editor/lists'
 import { MARGIN_PRESETS, PAPER_SIZES, withOrientation, withPaper, cmLabel, mmToPx } from '../model/settings'
 import { modKey, isMac } from '../platform'
 import { MobileRibbon } from './MobileRibbon'
+import { CommandSearch, CMD_SELECTOR, type CmdEntry } from './CommandSearch'
+import { ShapeGallery, ShapeIcon, insertShape, changeKind } from './ShapeTools'
+import { LINE_WEIGHTS_PT, isLine, ptToPx, pxToPt, shapeSrc, type VShape } from '../editor/shapes'
 import { IMG_ASPECTS, IMG_SHADOWS, IMG_SHAPES, SHADOW, DEFAULT_RADIUS, aspectValue, clampRadius, displaySize, formatRadius, radiusToSlider, sliderToRadius, shapeClipCss, type ImgAttrs } from '../editor/image'
 import { Ill } from './illustrations'
 import type { BreakKind } from '../editor/nodes'
@@ -54,14 +60,52 @@ function DesktopRibbon({ api }: { api: AppApi }) {
   const [tab, setTab] = useState<TabId>('home')
   const inTable = editor.isActive('table')
   const onImage = editor.isActive('image')
+  const onShape = onImage && !!editor.getAttributes('image').vshape
 
   useEffect(() => {
     if ((tab === 'table' && !inTable) || (tab === 'picture' && !onImage)) setTab('home')
   }, [inTable, onImage, tab])
 
+  // Command search: render every static tab off-screen once, read the controls' titles, drop it.
+  const [indexing, setIndexing] = useState(false)
+  const [cmdIndex, setCmdIndex] = useState<CmdEntry[]>([])
+  const indexRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    if (!indexing || !indexRef.current) return
+    const out: CmdEntry[] = []
+    indexRef.current.querySelectorAll<HTMLElement>('[data-cmd-tab]').forEach((pane) => {
+      const id = pane.dataset.cmdTab!
+      const tabLabel = pane.dataset.cmdLabel!
+      pane.querySelectorAll<HTMLElement>(CMD_SELECTOR).forEach((el, n) => {
+        const label = el.title.trim()
+        if (label) out.push({ tab: id, tabLabel, group: el.closest('[role=group]')?.getAttribute('aria-label') ?? '', label, n })
+      })
+    })
+    setCmdIndex(out)
+    setIndexing(false)
+  }, [indexing])
+
+  // After jumping to a command's tab, scroll to the control and flash it.
+  const [pending, setPending] = useState<CmdEntry | null>(null)
+  const ribbonRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!pending || pending.tab !== tab || !ribbonRef.current) return
+    const el = ribbonRef.current.querySelectorAll<HTMLElement>(CMD_SELECTOR)[pending.n]
+    setPending(null)
+    if (!el) return
+    el.scrollIntoView({ block: 'nearest', inline: 'center' })
+    const target = el.matches('button') ? el : el.querySelector<HTMLElement>('input, button')
+    target?.focus({ preventScroll: true })
+    el.classList.remove('cmd-flash')
+    void el.offsetWidth
+    el.classList.add('cmd-flash')
+    const done = () => el.classList.remove('cmd-flash')
+    el.addEventListener('animationend', done, { once: true })
+  }, [pending, tab])
+
   const tabs: [TabId, string, boolean?][] = [['home', t('tab.home')], ['insert', t('tab.insert')]]
   if (inTable) tabs.push(['table', t('tab.table'), true])
-  if (onImage) tabs.push(['picture', t('tab.picture'), true])
+  if (onImage) tabs.push(['picture', onShape ? t('tab.shape') : t('tab.picture'), true])
   tabs.push(['design', t('tab.design')], ['layout', t('tab.layout')], ['references', t('tab.references')], ['review', t('tab.review')], ['view', t('tab.view')])
 
   return (
@@ -79,17 +123,16 @@ function DesktopRibbon({ api }: { api: AppApi }) {
           {api.file.name}
           <span className="qat-state">{api.dirty ? ` • ${t('qat.unsaved')}` : api.file.path ? ` • ${t('qat.saved')}` : ''}</span>
         </div>
+        <CommandSearch index={cmdIndex} onOpen={() => setIndexing(true)} onFindInDoc={() => api.openFind('find')}
+          onPick={(c) => { setTab(c.tab as TabId); setPending(c) }} />
         <span className="app-mark" aria-hidden>G</span>
       </div>
       <nav className="tabs" role="tablist">
         {tabs.map(([id, label, ctx]) => (
           <button key={id} role="tab" aria-selected={tab === id} className={`tab${tab === id ? ' active' : ''}${ctx ? ' contextual' : ''}`} onClick={() => setTab(id)}>{label}</button>
         ))}
-        <button className="qat-search" onClick={() => api.openFind('find')} title={`${t('qat.search')} (${modKey}F)`}>
-          <Search size={14} /> <span>{t('qat.search')}</span>
-        </button>
       </nav>
-      <div className="ribbon" role="toolbar" aria-label={t('ribbon.aria')}>
+      <div ref={ribbonRef} className="ribbon" role="toolbar" aria-label={t('ribbon.aria')}>
         {tab === 'home' && <HomeTab api={api} />}
         {tab === 'insert' && <InsertTab api={api} />}
         {tab === 'design' && <DesignTab api={api} />}
@@ -98,8 +141,19 @@ function DesktopRibbon({ api }: { api: AppApi }) {
         {tab === 'review' && <ReviewTab api={api} />}
         {tab === 'view' && <ViewTab api={api} />}
         {tab === 'table' && inTable && <TableTab api={api} />}
-        {tab === 'picture' && onImage && <PictureTab api={api} />}
+        {tab === 'picture' && onImage && (onShape ? <ShapeTab api={api} /> : <PictureTab api={api} />)}
       </div>
+      {indexing && (
+        <div ref={indexRef} className="cmd-index" aria-hidden>
+          <div data-cmd-tab="home" data-cmd-label={t('tab.home')}><HomeTab api={api} /></div>
+          <div data-cmd-tab="insert" data-cmd-label={t('tab.insert')}><InsertTab api={api} /></div>
+          <div data-cmd-tab="design" data-cmd-label={t('tab.design')}><DesignTab api={api} /></div>
+          <div data-cmd-tab="layout" data-cmd-label={t('tab.layout')}><LayoutTab api={api} /></div>
+          <div data-cmd-tab="references" data-cmd-label={t('tab.references')}><ReferencesTab api={api} /></div>
+          <div data-cmd-tab="review" data-cmd-label={t('tab.review')}><ReviewTab api={api} /></div>
+          <div data-cmd-tab="view" data-cmd-label={t('tab.view')}><ViewTab api={api} /></div>
+        </div>
+      )}
     </header>
   )
 }
@@ -120,8 +174,8 @@ function HomeTab({ api }: { api: AppApi }) {
       <Group label={t('g.font')} onLauncher={() => api.openDialog({ type: 'font' })}>
         <Col>
           <Row>
-            <Combo title={t('font.family')} width={118} value={family} options={FONT_CHOICES} editable={false}
-              renderOption={(o) => <span style={{ fontFamily: fontStack(o) }}>{o}</span>}
+            <Combo title={t('font.family')} width={118} value={family} options={[...new Set([currentTheme.fonts.major, currentTheme.fonts.minor, ...FONT_CHOICES])]} editable={false}
+              renderOption={(o) => <span className="font-opt" style={{ fontFamily: fontStack(o) }}>{o}{o === currentTheme.fonts.major && <small>{t('font.themeHeadings')}</small>}{o === currentTheme.fonts.minor && <small>{t('font.themeBody')}</small>}</span>}
               onCommit={(v) => c().setFontFamily(fontStack(v)).run()} />
             <Combo title={t('font.size')} width={54} value={numText(size)} options={FONT_SIZES.map((s) => numText(s))}
               onCommit={(v) => { const n = parseFloat(v.replace(',', '.')); if (n > 0) setFontSizePt(e, n) }} />
@@ -132,8 +186,8 @@ function HomeTab({ api }: { api: AppApi }) {
             <Btn icon={ill('bold')} title={`${t('font.bold')} (${modKey}B)`} active={e.isActive('bold')} onClick={() => c().toggleBold().run()} />
             <Btn icon={ill('italic')} title={`${t('font.italic')} (${modKey}I)`} active={e.isActive('italic')} onClick={() => c().toggleItalic().run()} />
             <Btn icon={ill('underline')} title={`${t('font.underline')} (${modKey}U)`} active={e.isActive('underline')} onClick={() => c().toggleUnderline().run()} />
-            <Dropdown icon={<span className="color-ill">{ill('color')}<i style={{ background: fontColor }} /></span>} title={t('font.color')} onClick={() => c().setColor(fontColor).run()}>
-              {(close) => <ColorGrid onPick={(col) => { if (col) { setFontColor(col); c().setColor(col).run() } else c().unsetColor().run(); close() }} />}
+            <Dropdown icon={<span className="color-ill">{ill('color')}<i style={{ background: resolveColor(fontColor) }} /></span>} title={t('font.color')} onClick={() => c().setColor(fontColor).run()}>
+              {(close) => <ColorGrid linkTheme value={e.getAttributes('textStyle').color} onPick={(col) => { if (col) { setFontColor(col); c().setColor(col).run() } else c().unsetColor().run(); close() }} />}
             </Dropdown>
             <Dropdown icon={ill('highlight')} title={t('font.highlight')} onClick={() => c().toggleHighlight({ color: hlColor }).run()}>
               {(close) => <ColorGrid highlight onPick={(col) => { if (col) { setHlColor(col); c().setHighlight({ color: col }).run() } else c().unsetHighlight().run(); close() }} />}
@@ -319,6 +373,9 @@ function InsertTab({ api }: { api: AppApi }) {
             </>
           )}
         </Dropdown>
+        <Dropdown big icon={ill('shapes', B)} label={t('ins.shapes')} title={t('ins.shapesTitle')} popClass="shape-pop">
+          {(close) => <ShapeGallery onPick={(k) => { close(); insertShape(e, k) }} />}
+        </Dropdown>
         <Btn big icon={ill('signature', B)} label={t('ins.signature')} title={t('ins.signatureTitle')} onClick={() => api.openDialog({ type: 'signature' })} />
         <Btn big icon={ill('link', B)} label={t('ins.link')} title={`${t('ins.link')} (${modKey}K)`} active={e.isActive('link')} onClick={() => api.openDialog({ type: 'link' })} />
       </Group>
@@ -358,24 +415,31 @@ function InsertTab({ api }: { api: AppApi }) {
   )
 }
 
-// ───────────────────────── Design (style sets) ─────────────────────────
+// ───────────────────────── Design (themes & style sets) ─────────────────────────
+// Word's order: Themes · Document Formatting · Colors · Fonts · Set as Default.
 function DesignTab({ api }: { api: AppApi }) {
+  const th = api.settings.theme
   return (
-    <Group label={t('g.docFormatting')} className="sets-group">
-      <div className="style-sets">
-        {STYLE_SETS.map((set) => {
-          const pick = () => { applyStyleSet(set.id); api.setSettings({ ...api.settings, styleSet: set.id }) }
-          return (
-            <button key={set.id} className={`set-card${currentStyleSet === set.id ? ' active' : ''}`} title={set.name} onMouseDown={(ev) => ev.preventDefault()} onClick={pick}>
-              <span className="set-title" style={{ fontFamily: fontStack(set.headingFont), color: set.titleColor, fontWeight: set.headingBold ? 700 : 400, textAlign: set.titleAlign || 'left' }}>{styleName('Title')}</span>
-              <span className="set-h1" style={{ fontFamily: fontStack(set.headingFont), color: set.h1, fontWeight: set.headingBold ? 700 : 400 }}>{styleName('Heading1')}</span>
-              <span className="set-body" style={{ fontFamily: fontStack(set.bodyFont) }}>{t('design.body')}</span>
-              <span className="set-name">{set.name}</span>
-            </button>
-          )
-        })}
-      </div>
-    </Group>
+    <>
+      <Group label={t('g.themes')}>
+        <Dropdown big icon={<ThemeThumb theme={th} size="sm" />} label={t('design.themes')} title={`${t('design.themesTitle')} — ${themeName(th)}`} popClass="theme-pop">
+          {(close) => <ThemesMenu api={api} close={close} />}
+        </Dropdown>
+      </Group>
+      <Group label={t('g.docFormatting')} className="sets-group">
+        <StyleSetGallery api={api} />
+      </Group>
+      <Group label={t('g.themeParts')}>
+        <Dropdown big icon={<span className="colors-ill" aria-hidden>{(['accent1', 'accent2', 'accent3', 'accent4'] as const).map((s) => <i key={s} style={{ background: th.colors[s] }} />)}</span>}
+          label={t('design.colors')} title={t('design.colorsTitle')} popClass="palette-pop">
+          {(close) => <ColorsMenu api={api} close={close} />}
+        </Dropdown>
+        <Dropdown big icon={<span className="fonts-ill" aria-hidden style={{ fontFamily: fontStack(th.fonts.major) }}>Aa</span>}
+          label={t('design.fonts')} title={`${t('design.fontsTitle')} — ${fontPairName(th.fonts)}`} popClass="fonts-pop">
+          {(close) => <FontsMenu api={api} close={close} />}
+        </Dropdown>
+      </Group>
+    </>
   )
 }
 
@@ -440,28 +504,85 @@ function LayoutTab({ api }: { api: AppApi }) {
 }
 
 // ───────────────────────── References / Review / View ─────────────────────────
-export function insertCaption(api: AppApi, kind: 'figure' | 'table') {
+export type CaptionKind = 'figure' | 'table'
+export type CaptionPos = 'above' | 'below'
+const CAPTION_POS_KEY = 'grafi:captionPos'
+/** Where new captions go: figures below the picture, tables above the table, unless the user picked otherwise. */
+export function captionPos(kind: CaptionKind): CaptionPos {
+  try {
+    const v = JSON.parse(localStorage.getItem(CAPTION_POS_KEY) || '{}')[kind]
+    if (v === 'above' || v === 'below') return v
+  } catch { /* ignore */ }
+  return kind === 'figure' ? 'below' : 'above'
+}
+function setCaptionPos(kind: CaptionKind, pos: CaptionPos) {
+  try {
+    const v = JSON.parse(localStorage.getItem(CAPTION_POS_KEY) || '{}')
+    localStorage.setItem(CAPTION_POS_KEY, JSON.stringify({ ...v, [kind]: pos }))
+  } catch { /* ignore */ }
+}
+
+const hasImage = (n: PMNode) => {
+  let found = false
+  n.descendants((c) => { if (c.type.name === 'image') found = true; return !found })
+  return found
+}
+
+/**
+ * Inserts a numbered caption next to its picture / table. The target is the picture in the caret's
+ * paragraph, or else the one in the paragraph just before (then just after) it, so the caption lands
+ * against the picture even when the caret sits on an empty line beside it.
+ */
+export function insertCaption(api: AppApi, kind: CaptionKind, pos: CaptionPos = captionPos(kind)) {
   const e = api.editor
   const { $from } = e.state.selection
   let tableDepth = -1
   for (let d = $from.depth; d > 0; d--) if ($from.node(d).type.name === 'table') { tableDepth = d; break }
+
+  // [start, end) of the block the caption belongs to, plus attrs to copy (alignment).
+  let start: number, end: number, target: PMNode | null = null
   if (kind === 'table' && tableDepth > 0) {
-    const pos = $from.before(tableDepth)
-    e.chain().focus().insertContentAt(pos, { type: 'paragraph', attrs: { styleId: 'Caption', captionKind: 'table', keepNext: true } })
-      .setTextSelection(pos + 1).run()
-    return
+    start = $from.before(tableDepth); end = $from.after(tableDepth)
+  } else {
+    let d = $from.depth
+    while (d > 0 && !$from.node(d).isTextblock) d--
+    if (d === 0) { start = end = e.state.selection.to }
+    else {
+      start = $from.before(d); end = $from.after(d); target = $from.node(d)
+      if (kind === 'figure' && !hasImage(target)) {
+        const parent = $from.node(d - 1), i = $from.index(d - 1)
+        const prev = i > 0 ? parent.child(i - 1) : null
+        const next = i + 1 < parent.childCount ? parent.child(i + 1) : null
+        if (prev && prev.isTextblock && hasImage(prev)) { end = start; start -= prev.nodeSize; target = prev }
+        else if (next && next.isTextblock && hasImage(next)) { start = end; end += next.nodeSize; target = next }
+      }
+    }
   }
-  let d = $from.depth
-  while (d > 0 && !$from.node(d).isTextblock) d--
-  const paraPos = d > 0 ? $from.before(d) : null
-  const after = d > 0 ? $from.after(d) : e.state.selection.to
+
+  let align: string | null = (target?.attrs.textAlign as string | null) ?? null
+  if (!align && target && kind === 'figure') target.descendants((c) => {
+    if (c.type.name === 'image' && c.attrs.wrap === 'topBottom' && c.attrs.x == null && c.attrs.align !== 'left') align = c.attrs.align
+    return !align
+  })
+  const attrs = { styleId: 'Caption', captionKind: kind, ...(align ? { textAlign: align } : {}), ...(pos === 'above' ? { keepNext: true } : {}) }
+  const at = pos === 'above' ? start : end
   let chain = e.chain().focus()
-  if (paraPos != null) chain = chain.command(({ tr }) => {
-    const n = tr.doc.nodeAt(paraPos)
-    if (n && (n.type.name === 'paragraph' || n.type.name === 'heading')) tr.setNodeMarkup(paraPos, undefined, { ...n.attrs, keepNext: true })
+  // A caption below: keep the picture's paragraph on the same page as its caption.
+  if (pos === 'below' && target && start !== end) chain = chain.command(({ tr }) => {
+    const n = tr.doc.nodeAt(start)
+    if (n && (n.type.name === 'paragraph' || n.type.name === 'heading')) tr.setNodeMarkup(start, undefined, { ...n.attrs, keepNext: true })
     return true
   })
-  chain.insertContentAt(after, { type: 'paragraph', attrs: { styleId: 'Caption', captionKind: kind } }).setTextSelection(after + 1).run()
+  chain.insertContentAt(at, { type: 'paragraph', attrs }).setTextSelection(at + 1).run()
+}
+
+function CaptionMenu({ api, kind, close }: { api: AppApi; kind: CaptionKind; close: () => void }) {
+  const cur = captionPos(kind)
+  const item = (pos: CaptionPos) => (
+    <MenuItem key={pos} label={t(`caption.${pos}.${kind}`)} active={cur === pos}
+      onClick={() => { setCaptionPos(kind, pos); insertCaption(api, kind, pos); close() }} />
+  )
+  return <><MenuTitle>{t('caption.position')}</MenuTitle>{item('below')}{item('above')}</>
 }
 
 function ReferencesTab({ api }: { api: AppApi }) {
@@ -482,8 +603,12 @@ function ReferencesTab({ api }: { api: AppApi }) {
           onClick={() => api.setSettings({ ...s, headingNumbers: !s.headingNumbers })} />
       </Group>
       <Group label={t('g.captions')}>
-        <Btn big icon={ill('captionImage', B)} label={t('refs.capFig')} title={t('refs.capFigTitle')} onClick={() => insertCaption(api, 'figure')} />
-        <Btn big icon={ill('captionTable', B)} label={t('refs.capTab')} title={t('refs.capTabTitle')} onClick={() => insertCaption(api, 'table')} />
+        <Dropdown big icon={ill('captionImage', B)} label={t('refs.capFig')} title={t('refs.capFigTitle')} onClick={() => insertCaption(api, 'figure')}>
+          {(close) => <CaptionMenu api={api} kind="figure" close={close} />}
+        </Dropdown>
+        <Dropdown big icon={ill('captionTable', B)} label={t('refs.capTab')} title={t('refs.capTabTitle')} onClick={() => insertCaption(api, 'table')}>
+          {(close) => <CaptionMenu api={api} kind="table" close={close} />}
+        </Dropdown>
       </Group>
     </>
   )
@@ -553,7 +678,7 @@ function TableTab({ api }: { api: AppApi }) {
         <Btn big icon={ill('split', B)} label={t('tbl.split')} title={t('tbl.split')} disabled={!e.can().splitCell()} onClick={() => c().splitCell().run()} />
         <Btn big icon={ill('headerRow', B)} label={t('tbl.headerRow')} title={t('tbl.headerRow')} onClick={() => c().toggleHeaderRow().run()} />
         <Dropdown big icon={ill('shading', B)} label={t('tbl.shading')} title={t('tbl.shadingTitle')}>
-          {(close) => <ColorGrid autoLabel={t('color.none')} onPick={(col) => { setCell({ backgroundColor: col }); close() }} />}
+          {(close) => <ColorGrid linkTheme autoLabel={t('color.none')} onPick={(col) => { setCell({ backgroundColor: col }); close() }} />}
         </Dropdown>
         <Dropdown big icon={ill('valign', B)} label={t('tbl.valign')} title={t('tbl.valignTitle')}>
           {(close) => (
@@ -588,6 +713,36 @@ function WrapArt({ kind, align }: { kind: 'topBottom' | 'square'; align: string 
   )
 }
 
+function WrapPosition({ a, set, hint }: { a: ImgAttrs; set: (p: Partial<ImgAttrs>) => void; hint: string }) {
+  const wrap = a.wrap
+  return (
+    <>
+      <Group label={t('g.wrap')}>
+        <div className="wrap-cards">
+          <button className={`wrap-card${wrap === 'topBottom' ? ' active' : ''}`} title={t('wrap.topBottomTitle')}
+            onMouseDown={(ev) => ev.preventDefault()} onClick={() => set({ wrap: 'topBottom', align: a.align || 'center' })}>
+            <WrapArt kind="topBottom" align={wrap === 'topBottom' ? a.align : 'center'} /><span>{t('wrap.topBottom')}</span>
+          </button>
+          <button className={`wrap-card${wrap === 'square' ? ' active' : ''}`} title={t('wrap.squareTitle')}
+            onMouseDown={(ev) => ev.preventDefault()} onClick={() => set({ wrap: 'square', align: a.align === 'right' ? 'right' : 'left' })}>
+            <WrapArt kind="square" align={wrap === 'square' ? a.align : 'left'} /><span>{t('wrap.square')}</span>
+          </button>
+        </div>
+      </Group>
+      <Group label={t('g.position')}>
+        <Col>
+          <Row>
+            <Btn icon={ill('picLeft', 22)} title={t('common.left')} active={a.x == null && a.align === 'left'} onClick={() => set({ align: 'left', x: null, wrap: wrap || 'topBottom' })} />
+            <Btn icon={ill('picCenter', 22)} title={wrap === 'square' ? t('pos.centerTopBottomOnly') : t('common.center')} disabled={wrap === 'square'} active={a.x == null && a.align === 'center' && wrap !== 'square'} onClick={() => set({ align: 'center', x: null, wrap: wrap || 'topBottom' })} />
+            <Btn icon={ill('picRight', 22)} title={t('common.right')} active={a.x == null && a.align === 'right'} onClick={() => set({ align: 'right', x: null, wrap: wrap || 'topBottom' })} />
+          </Row>
+          <span className="muted small" style={{ maxWidth: 120, whiteSpace: 'normal' }}>{hint}</span>
+        </Col>
+      </Group>
+    </>
+  )
+}
+
 function PictureTab({ api }: { api: AppApi }) {
   const { editor: e } = api
   const a = e.getAttributes('image') as ImgAttrs
@@ -610,7 +765,6 @@ function PictureTab({ api }: { api: AppApi }) {
   }
   const boxRatio = box.h / box.w
   const replaceRef = useRef<HTMLInputElement>(null)
-  const wrap = a.wrap
   const pan = () => (document.querySelector('.wpic.selected') as HTMLElement | null)?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
   // The radius slider takes focus from the editor, so remember where the picture is and keep it selected.
   const picPos = useRef<number | null>(null)
@@ -623,28 +777,7 @@ function PictureTab({ api }: { api: AppApi }) {
   }
   return (
     <>
-      <Group label={t('g.wrap')}>
-        <div className="wrap-cards">
-          <button className={`wrap-card${wrap === 'topBottom' ? ' active' : ''}`} title={t('wrap.topBottomTitle')}
-            onMouseDown={(ev) => ev.preventDefault()} onClick={() => set({ wrap: 'topBottom', align: a.align || 'center' })}>
-            <WrapArt kind="topBottom" align={wrap === 'topBottom' ? a.align : 'center'} /><span>{t('wrap.topBottom')}</span>
-          </button>
-          <button className={`wrap-card${wrap === 'square' ? ' active' : ''}`} title={t('wrap.squareTitle')}
-            onMouseDown={(ev) => ev.preventDefault()} onClick={() => set({ wrap: 'square', align: a.align === 'right' ? 'right' : 'left' })}>
-            <WrapArt kind="square" align={wrap === 'square' ? a.align : 'left'} /><span>{t('wrap.square')}</span>
-          </button>
-        </div>
-      </Group>
-      <Group label={t('g.position')}>
-        <Col>
-          <Row>
-            <Btn icon={ill('picLeft', 22)} title={t('common.left')} active={a.x == null && a.align === 'left'} onClick={() => set({ align: 'left', x: null, wrap: wrap || 'topBottom' })} />
-            <Btn icon={ill('picCenter', 22)} title={wrap === 'square' ? t('pos.centerTopBottomOnly') : t('common.center')} disabled={wrap === 'square'} active={a.x == null && a.align === 'center' && wrap !== 'square'} onClick={() => set({ align: 'center', x: null, wrap: wrap || 'topBottom' })} />
-            <Btn icon={ill('picRight', 22)} title={t('common.right')} active={a.x == null && a.align === 'right'} onClick={() => set({ align: 'right', x: null, wrap: wrap || 'topBottom' })} />
-          </Row>
-          <span className="muted small" style={{ maxWidth: 120, whiteSpace: 'normal' }}>{t('pos.dragHint')}</span>
-        </Col>
-      </Group>
+      <WrapPosition a={a} set={set} hint={t('pos.dragHint')} />
       <Group label={t('g.cropShape')}>
         <Col>
           <div className="pic-gallery">
@@ -739,6 +872,82 @@ function PictureTab({ api }: { api: AppApi }) {
           r.readAsDataURL(f)
           ev.target.value = ''
         }} />
+      </Group>
+    </>
+  )
+}
+
+// ───────────────────────── Contextual: Shape ─────────────────────────
+const QUICK_STYLES: { fill: string | null; line: string | null }[] = [
+  { fill: '#1AB3AC', line: '#117470' }, { fill: '#3B82F6', line: '#1D4ED8' }, { fill: '#F59E0B', line: '#B45309' },
+  { fill: '#EF4444', line: '#B91C1C' }, { fill: '#8B5CF6', line: '#6D28D9' }, { fill: '#FFFFFF', line: '#243B3A' },
+  { fill: null, line: '#1AB3AC' }, { fill: '#243B3A', line: null },
+]
+
+function ShapeTab({ api }: { api: AppApi }) {
+  const { editor: e } = api
+  const a = e.getAttributes('image') as ImgAttrs
+  const v = a.vshape as VShape
+  const box = displaySize(a)
+  const line = isLine(v.k)
+  const colW = mmToPx(api.settings.width - api.settings.margins.left - api.settings.margins.right)
+  const pxToCm = (px: number) => Math.round((px / 96) * 2.54 * 100) / 100
+  const cmToPx = (cm: number) => Math.round((cm / 2.54) * 96)
+  const set = (patch: Partial<ImgAttrs>) => e.chain().focus().updateAttributes('image', patch).run()
+  const setV = (patch: Partial<VShape>) => { const nv = { ...v, ...patch }; set({ vshape: nv, src: shapeSrc(nv, box.w, box.h) }) }
+  const setSize = (w: number, h: number) => {
+    w = Math.max(12, Math.min(colW, Math.round(w))); h = Math.max(line ? 12 : 16, Math.round(h))
+    set({ width: w, height: h, src: shapeSrc(v, w, h) })
+  }
+  return (
+    <>
+      <Group label={t('g.insertShapes')}>
+        <Dropdown big icon={<ShapeIcon k={v.k} v={v} w={34} h={28} />} label={t('shp.change')} title={t('shp.changeTitle')} popClass="shape-pop">
+          {(close) => <ShapeGallery current={v.k} v={v} onPick={(k) => { close(); const nv = changeKind(v, k); set({ vshape: nv, src: shapeSrc(nv, box.w, box.h), alt: a.alt }) }} />}
+        </Dropdown>
+      </Group>
+      <Group label={t('g.shapeStyles')}>
+        {!line && (
+          <div className="shape-quick" role="group" aria-label={t('shp.quick')}>
+            {QUICK_STYLES.map((q, i) => (
+              <button key={i} className={`shape-cell${v.fill === q.fill && v.line === q.line ? ' active' : ''}`} title={t('shp.quick')}
+                onMouseDown={(ev) => ev.preventDefault()} onClick={() => setV({ fill: q.fill, line: q.line, lw: q.line ? v.lw || ptToPx(1.5) : v.lw })}>
+                <ShapeIcon k={v.k} v={{ ...v, ...q }} w={26} h={20} />
+              </button>
+            ))}
+          </div>
+        )}
+        <Col>
+          {!line && (
+            <Dropdown icon={<span className="color-ill">{ill('shading')}<i style={{ background: v.fill || 'transparent' }} /></span>} label={t('shp.fill')} title={t('shp.fillTitle')}>
+              {(close) => <ColorGrid autoLabel={t('shp.noFill')} onPick={(col) => { setV({ fill: col }); close() }} />}
+            </Dropdown>
+          )}
+          <Dropdown icon={<span className="color-ill">{ill('color')}<i style={{ background: v.line || 'transparent' }} /></span>} label={line ? t('shp.lineColor') : t('shp.line')} title={line ? t('shp.lineColor') : t('shp.lineTitle')}>
+            {(close) => <ColorGrid autoLabel={line ? undefined : t('shp.noLine')} onPick={(col) => { setV(line && !col ? { line: '#243B3A' } : { line: col }); close() }} />}
+          </Dropdown>
+          <Dropdown icon={ill('lineWeight')} label={t('shp.weight')} title={t('shp.weightTitle')}>
+            {(close) => (
+              <>
+                {LINE_WEIGHTS_PT.map((pt) => (
+                  <MenuItem key={pt} active={v.line != null && Math.abs(pxToPt(v.lw) - pt) < 0.01}
+                    label={<span className="weight-item"><i style={{ height: Math.max(1, ptToPx(pt)) }} />{`${fmtNum(pt, 2)} ${t('unit.pt')}`}</span>}
+                    onClick={() => { setV({ lw: ptToPx(pt), line: v.line || '#243B3A' }); close() }} />
+                ))}
+              </>
+            )}
+          </Dropdown>
+        </Col>
+      </Group>
+      <WrapPosition a={a} set={set} hint={t('shp.dragHint')} />
+      <Group label={t('g.size')}>
+        <Col>
+          <Row>{ill('widthArrows', 20)}<NumField label={t('common.width')} unit={t('unit.cm')} step={0.5} min={0.3} value={pxToCm(box.w)} onChange={(cm) => setSize(cmToPx(cm), box.h)} /></Row>
+          <Row>{ill('heightArrows', 20)}<NumField label={t('common.height')} unit={t('unit.cm')} step={0.5} min={0.3} value={pxToCm(box.h)} onChange={(cm) => setSize(box.w, cmToPx(cm))} /></Row>
+        </Col>
+      </Group>
+      <Group label={t('g.actions')}>
+        <Btn big icon={ill('delete', B)} label={t('common.delete')} title={t('shp.deleteTitle')} onClick={() => e.chain().focus().deleteSelection().run()} />
       </Group>
     </>
   )

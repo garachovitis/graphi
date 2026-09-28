@@ -16,6 +16,7 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorView, NodeView } from '@tiptap/pm/view'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { t, fmtNum, onLangChange, type Key } from '../i18n'
+import { parseVShape, shapeSrc, isLine, type VShape } from './shapes'
 
 export type ImgWrap = 'topBottom' | 'square'
 export type ImgAlign = 'left' | 'center' | 'right'
@@ -91,6 +92,10 @@ export interface ImgAttrs {
   radius: number
   /** Free horizontal position: px from the left of the paragraph's text box (null = use `align`). */
   x: number | null
+  /** Free vertical position: px below the line the picture is anchored on (0 = on that line). */
+  y?: number | null
+  /** Set when this "picture" is a shape (Insert ▸ Shapes); `src` is then drawn from it. */
+  vshape?: VShape | null
 }
 
 /** Displayed box size (px) given attributes. */
@@ -114,14 +119,19 @@ export function pictureStyles(a: ImgAttrs, box: { w: number; h: number }, withFi
   const img: string[] = [`width:${box.w}px`, `height:${box.h}px`, 'object-fit:cover', `object-position:${a.focusX}% ${a.focusY}%`]
   const gap = '8pt'
   const x = a.x == null ? null : Math.max(0, Math.round(a.x))
+  const y = a.wrap && a.y ? Math.max(0, Math.round(a.y)) : 0
   if (a.wrap === 'square') {
     const side = a.align === 'right' ? 'right' : 'left'
     // A right float at `x` keeps its distance to the right edge, so text still wraps on the left.
     const edge = x == null ? '0' : side === 'left' ? `${x}px` : `max(0px, calc(100% - ${x + box.w}px))`
-    wrap.push(`float:${side}`, side === 'left' ? `margin:2pt ${gap} 4pt ${edge}` : `margin:2pt ${edge} 4pt ${gap}`)
+    const top = y ? `calc(2pt + ${y}px)` : '2pt'
+    wrap.push(`float:${side}`, side === 'left' ? `margin:${top} ${gap} 4pt ${edge}` : `margin:${top} ${edge} 4pt ${gap}`)
+    // Moved down by `y`: text still runs full width above the picture, only beside it does it wrap.
+    if (y) wrap.push(`shape-outside:inset(${y}px 0 0 0)`)
   } else if (a.wrap === 'topBottom') {
-    if (x != null) wrap.push('display:table', `margin:${gap} auto ${gap} ${x}px`)
-    else wrap.push('display:table', `margin:${gap} ${a.align === 'left' ? '0' : 'auto'} ${gap} ${a.align === 'right' ? '0' : 'auto'}`)
+    const top = y ? `calc(${gap} + ${y}px)` : gap
+    if (x != null) wrap.push('display:table', `margin:${top} auto ${gap} ${x}px`)
+    else wrap.push('display:table', `margin:${top} ${a.align === 'left' ? '0' : 'auto'} ${gap} ${a.align === 'right' ? '0' : 'auto'}`)
   } else {
     wrap.push('display:inline-block', 'vertical-align:bottom')
   }
@@ -146,7 +156,9 @@ export function shadowLayerStyles(a: ImgAttrs, box: { w: number; h: number }) {
 // ───────────── node view ─────────────
 interface DropTarget {
   pos: number
-  attrs: Pick<ImgAttrs, 'x' | 'align'>
+  attrs: Pick<ImgAttrs, 'x' | 'align' | 'y'>
+  /** Where the picture's top should end up (px from the top of the editor), to correct `y` after the move. */
+  wantTop?: number
   /** Where the dashed drop outline is drawn (client px). */
   preview: { left: number; top: number }
 }
@@ -216,9 +228,12 @@ class PictureView implements NodeView {
 
   private render() {
     const a = this.attrs
-    if (this.img.getAttribute('src') !== a.src) this.img.src = a.src
-    this.img.alt = a.alt || ''
     const box = displaySize(a, this.natural)
+    // Shapes are redrawn at their exact size, so outlines never stretch.
+    const src = a.vshape ? shapeSrc(a.vshape, box.w, box.h) : a.src
+    if (this.img.getAttribute('src') !== src) this.img.src = src
+    this.img.alt = a.alt || ''
+    this.dom.classList.toggle('wshape', !!a.vshape)
     const st = pictureStyles(a, box)
     this.dom.setAttribute('style', st.wrap)
     this.img.setAttribute('style', `${st.img};position:relative;z-index:1`)
@@ -393,6 +408,8 @@ class PictureView implements NodeView {
     if (a.wrap) {
       const lineStart = view.posAtCoords({ left: textLeft + 1, top: probeY })
       if (lineStart && lineStart.pos >= $hit.start() && lineStart.pos <= $hit.end()) pos = lineStart.pos
+      // Below the block's last line (e.g. the empty rest of the page): anchor at its end.
+      try { if (top > view.coordsAtPos($hit.end()).bottom) pos = $hit.end() } catch { /* keep the line */ }
     }
     // Horizontal spot, snapped to the left / centre / right when close.
     const maxX = Math.max(0, textW - w)
@@ -410,12 +427,52 @@ class PictureView implements NodeView {
     } else x = a.x
     if (x != null) x = Math.round(x)
     const px = x ?? (align === 'left' ? 0 : align === 'right' ? maxX : maxX / 2)
+    if (!a.wrap) {
+      let lineTop = top
+      try { lineTop = view.coordsAtPos(pos).top } catch { /* keep the pointer's y */ }
+      return { pos, attrs: { x, align, y: null }, preview: { left, top: lineTop } }
+    }
+    // Free vertical spot: the picture lands exactly where it is dropped (not on the line's top).
     let lineTop = top
     try { lineTop = view.coordsAtPos(pos).top } catch { /* keep the pointer's y */ }
-    return { pos, attrs: { x, align }, preview: { left: a.wrap ? textLeft + px * zoom : left, top: a.wrap ? lineTop : top } }
+    const y = Math.max(0, Math.round((top - lineTop) / zoom))
+    return {
+      pos, attrs: { x, align, y: y < 4 ? null : y },
+      wantTop: (Math.max(top, edRect.top) - edRect.top) / zoom,
+      preview: { left: textLeft + px * zoom, top: Math.max(top, edRect.top) },
+    }
   }
 
   private moveTo(target: DropTarget) {
+    this.place(target)
+    if (target.wantTop != null) PictureView.settle(this.view, target.wantTop)
+  }
+
+  /**
+   * After a move the text reflows (the picture left its old spot, wrapped lines re-wrap), so the
+   * estimated `y` can be off: measure where the picture really landed and nudge `y` to match.
+   */
+  private static settle(view: EditorView, wantTop: number, tries = 3) {
+    requestAnimationFrame(() => {
+      const sel = view.state.selection
+      if (!(sel instanceof NodeSelection) || sel.node.type.name !== 'image') return
+      const dom = view.nodeDOM(sel.from) as HTMLElement | null
+      if (!dom || dom.nodeType !== 1) return
+      const ed = view.dom.getBoundingClientRect()
+      const zoom = ed.width / ((view.dom as HTMLElement).offsetWidth || 1) || 1
+      const now = (dom.getBoundingClientRect().top - ed.top) / zoom
+      const d = Math.round(wantTop - now)
+      if (Math.abs(d) < 2) return
+      const y0 = Number(sel.node.attrs.y) || 0
+      const y = Math.max(0, y0 + d)
+      if (y === y0) return
+      const tr = view.state.tr.setNodeMarkup(sel.from, undefined, { ...sel.node.attrs, y: y < 4 ? null : y })
+      view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, sel.from)))
+      if (tries > 1) PictureView.settle(view, wantTop, tries - 1)
+    })
+  }
+
+  private place(target: DropTarget) {
     const from = this.getPos()
     if (from == null) return
     const { state } = this.view
@@ -447,16 +504,27 @@ class PictureView implements NodeView {
     const dir = corner.includes('w') ? -1 : 1
     const ratio = start.h / start.w
     const calc = (ev: PointerEvent) => Math.round(Math.max(24, Math.min(colW, start.w + (dir * (ev.clientX - x0)) / zoom)))
+    // Shapes resize freely (Shift keeps the proportions); pictures always keep theirs.
+    const vs = this.attrs.vshape
+    const y0 = e.clientY
+    const dirY = corner.includes('n') ? -1 : 1
+    const calcH = (ev: PointerEvent, w: number) => {
+      if (!vs || ev.shiftKey) return Math.round(w * ratio)
+      return Math.round(Math.max(isLine(vs.k) ? 12 : 16, start.h + (dirY * (ev.clientY - y0)) / zoom))
+    }
     const move = (ev: PointerEvent) => {
       const w = calc(ev)
+      const h = calcH(ev, w)
       this.img.style.width = `${w}px`
-      this.img.style.height = `${Math.round(w * ratio)}px`
+      this.img.style.height = `${h}px`
+      if (vs) this.img.src = shapeSrc(vs, w, h)
     }
     const up = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       const w = calc(ev)
-      this.setAttrs({ width: w, height: Math.round(w * ratio) })
+      const h = calcH(ev, w)
+      this.setAttrs(vs ? { width: w, height: h, src: shapeSrc(vs, w, h) } : { width: w, height: Math.round(w * ratio) })
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
@@ -519,6 +587,8 @@ export const Picture = Image.extend({
       shadow: attr('shadow', 'none'),
       radius: attr('radius', DEFAULT_RADIUS, clampRadius),
       x: attr('x', null, (v) => (v === '' || !Number.isFinite(Number(v)) ? null : Number(v))),
+      y: attr('y', null, (v) => (v === '' || !Number.isFinite(Number(v)) ? null : Number(v))),
+      vshape: attr('vshape', null, parseVShape),
       // One style attribute for HTML export / clipboard, computed from all of the above.
       _style: {
         default: null,
@@ -536,6 +606,8 @@ export const Picture = Image.extend({
           if (a.shadow !== 'none') out['data-shadow'] = a.shadow
           if (a.radius != null && a.radius !== DEFAULT_RADIUS) out['data-radius'] = String(a.radius)
           if (a.x != null) out['data-x'] = String(Math.round(a.x))
+          if (a.y) out['data-y'] = String(Math.round(a.y))
+          if (a.vshape) out['data-vshape'] = JSON.stringify(a.vshape)
           return out
         },
       },

@@ -11,15 +11,19 @@ import { layoutStore } from '../editor/layoutStore'
 import { countWords } from './StatusBar'
 import { modKey } from '../platform'
 import { PAGE_GAP } from './Canvas'
-import { parseLocale } from './controls'
+import { parseLocale, ColorWell } from './controls'
+import { resolveColor } from '../model/themes'
 import { SignatureDialog } from './SignatureDialog'
+import { ThemeStudio } from './ThemeTools'
+import type { DocTheme } from '../model/themes'
 import { t, fmtInt, fmtNum, decSep, type Key } from '../i18n'
 
 export type DialogState =
   | null
   | { type: 'table' | 'link' | 'symbol' | 'headerFooter' | 'font' | 'paragraph' | 'pageSetup' | 'wordCount' | 'shortcuts' | 'imageUrl' | 'listStart' | 'goto' | 'signature' }
+  | { type: 'theme'; theme?: DocTheme }
 
-function Modal(p: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; width?: number }) {
+export function Modal(p: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; width?: number }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const first = ref.current?.querySelector<HTMLElement>('input,select,textarea,button:not(.modal-x)')
@@ -85,6 +89,7 @@ export function Dialogs({ api, dialog, close }: { api: AppApi; dialog: DialogSta
     case 'listStart': return <ListStartDlg api={api} close={close} />
     case 'goto': return <GotoDlg api={api} close={close} />
     case 'signature': return <SignatureDialog api={api} close={close} />
+    case 'theme': return <ThemeStudio api={api} close={close} initial={dialog.theme} />
   }
 }
 
@@ -253,9 +258,10 @@ function FontDlg({ api, close }: { api: AppApi; close: () => void }) {
   const [strike, setStrike] = useState(e.isActive('strike'))
   const [sup, setSup] = useState(e.isActive('superscript'))
   const [sub, setSub] = useState(e.isActive('subscript'))
-  const [color, setColor] = useState<string>(e.getAttributes('textStyle').color || '#000000')
+  const [color, setColor] = useState<string | null>(e.getAttributes('textStyle').color || null)
   const apply = () => {
-    let c = e.chain().focus().setFontFamily(fontStack(family)).setFontSize(`${size}pt`).setColor(color)
+    let c = e.chain().focus().setFontFamily(fontStack(family)).setFontSize(`${size}pt`)
+    c = color ? c.setColor(color) : c.unsetColor()
     c = bold ? c.setBold() : c.unsetBold()
     c = italic ? c.setItalic() : c.unsetItalic()
     c = underline ? c.setUnderline() : c.unsetUnderline()
@@ -278,7 +284,7 @@ function FontDlg({ api, close }: { api: AppApi; close: () => void }) {
           <span className="unit-input"><input type="number" min={1} max={1638} step={0.5} value={size} list="font-sizes" onChange={(ev) => setSize(Number(ev.target.value))} /><i>{t('unit.pt')}</i></span>
           <datalist id="font-sizes">{FONT_SIZES.map((s) => <option key={s} value={s} />)}</datalist>
         </Field>
-        <Field label={t('dlg.fontColor')}><input type="color" value={color} onChange={(ev) => setColor(ev.target.value)} /></Field>
+        <div className="field"><span>{t('dlg.fontColor')}</span><ColorWell label={t('dlg.fontColor')} value={color} linkTheme onChange={setColor} /></div>
       </div>
       <fieldset><legend>{t('dlg.effects')}</legend>
         <div className="checks">
@@ -291,7 +297,7 @@ function FontDlg({ api, close }: { api: AppApi; close: () => void }) {
         </div>
       </fieldset>
       <div className="font-preview" style={{
-        fontFamily: fontStack(family), fontSize: `${Math.min(size, 36)}pt`, color, fontWeight: bold ? 700 : 400, fontStyle: italic ? 'italic' : 'normal',
+        fontFamily: fontStack(family), fontSize: `${Math.min(size, 36)}pt`, color: color ? resolveColor(color) : '#000', fontWeight: bold ? 700 : 400, fontStyle: italic ? 'italic' : 'normal',
         textDecoration: [underline && 'underline', strike && 'line-through'].filter(Boolean).join(' ') || 'none',
       }}>
         {sup ? <sup>Αα Ββ Γγ Abc</sup> : sub ? <sub>Αα Ββ Γγ Abc</sub> : 'Αα Ββ Γγ Abc 123'}

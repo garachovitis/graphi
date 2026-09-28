@@ -358,6 +358,12 @@ ipcMain.handle('pdf:render', async (e) => {
   return new Uint8Array(buf)
 })
 
+// Colour "scope" (magnifier): a pixel-exact snapshot of this window to sample colours from.
+ipcMain.handle('screen:capture', async (e) => {
+  const img = await e.sender.capturePage()
+  return new Uint8Array(img.toPNG())
+})
+
 ipcMain.handle('print', async (e) => {
   return new Promise((resolve) => {
     e.sender.print({ silent: false, printBackground: true }, (success, reason) => resolve({ success, reason }))

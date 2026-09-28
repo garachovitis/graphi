@@ -16,6 +16,8 @@ interface NativeBridge {
   saveFile(o: SaveOpts): Promise<SavedFile | null>
   renderPdf(): Promise<Uint8Array>
   print(): Promise<{ success: boolean; reason?: string }>
+  /** PNG snapshot of the window at device resolution (colour scope). */
+  captureWindow?(): Promise<Uint8Array>
   setWindowState(s: { title: string; dirty: boolean; filePath: string | null }): Promise<void>
   newWindow(p?: string): Promise<void>
   closeNow(): Promise<void>
@@ -221,6 +223,27 @@ export const platform = {
     }
     window.print()
     return { success: true }
+  },
+  /** A snapshot of the app window for the colour scope, or null where none can be taken. */
+  canCaptureWindow: () => !!native?.captureWindow || (!isMobileApp && !!navigator.mediaDevices?.getDisplayMedia),
+  captureWindow: async (): Promise<ImageBitmap | null> => {
+    if (native?.captureWindow) return createImageBitmap(new Blob([new Uint8Array(await native.captureWindow())], { type: 'image/png' }))
+    if (isMobileApp || !navigator.mediaDevices?.getDisplayMedia) return null
+    // Browsers: one frame of this tab (the browser asks the user to allow it).
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { displaySurface: 'browser' }, audio: false, preferCurrentTab: true, selfBrowserSurface: 'include',
+    } as DisplayMediaStreamOptions)
+    try {
+      const video = document.createElement('video')
+      video.muted = true
+      video.srcObject = stream
+      await video.play()
+      // Let the permission prompt and the "sharing" bar get out of the way.
+      await new Promise((r) => setTimeout(r, 350))
+      return await createImageBitmap(video)
+    } finally {
+      stream.getTracks().forEach((tr) => tr.stop())
+    }
   },
   setWindowState: (s: { title: string; dirty: boolean; filePath: string | null }) => {
     document.title = `${s.dirty ? '● ' : ''}${s.title}`
