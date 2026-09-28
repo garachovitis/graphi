@@ -370,11 +370,14 @@ export function App() {
 
   const exportPdf = useCallback(async () => {
     await beforeOutput()
-    const bytes = await platform.renderPdf(pageSpecRef.current())
+    // The PDF's Title comes from document.title: the document's name, not the window's "● … — Grafi".
+    const winTitle = document.title
+    document.title = settings.title || baseName(file.name)
+    const bytes = await platform.renderPdf(pageSpecRef.current()).finally(() => { document.title = winTitle })
     if (!bytes) { await platform.print(pageSpecRef.current()); return }
     const res = await platform.save({ suggestedName: `${baseName(file.name)}.pdf`, kind: 'pdf', data: bytes, askPath: true })
     if (res) toast(t('app.pdfExported', { name: res.name }))
-  }, [file])
+  }, [file, settings.title])
   const exportPdfRef = useRef(exportPdf)
   exportPdfRef.current = exportPdf
 

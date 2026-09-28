@@ -347,7 +347,15 @@ ipcMain.handle('file:save', async (e, { filePath, suggestedName, kind, data, ask
   return { path: target, name: path.basename(target) }
 })
 
-ipcMain.handle('pdf:render', async (e) => {
+// Chromium paints the page margins (outside the root box) with the window's base colour,
+// which is the brand teal (for a flash-free launch). Swap to white while printing.
+async function onWhitePaper(e, fn) {
+  const win = BrowserWindow.fromWebContents(e.sender)
+  win?.setBackgroundColor('#ffffff')
+  try { return await fn() } finally { win?.setBackgroundColor('#1ab3ac') }
+}
+
+ipcMain.handle('pdf:render', (e) => onWhitePaper(e, async () => {
   // Page size and margins come from the document's CSS @page rule (preferCSSPageSize).
   const buf = await e.sender.printToPDF({
     printBackground: true,
@@ -356,7 +364,7 @@ ipcMain.handle('pdf:render', async (e) => {
     generateDocumentOutline: true,
   })
   return new Uint8Array(buf)
-})
+}))
 
 // Colour "scope" (magnifier): a pixel-exact snapshot of this window to sample colours from.
 ipcMain.handle('screen:capture', async (e) => {
@@ -364,11 +372,9 @@ ipcMain.handle('screen:capture', async (e) => {
   return new Uint8Array(img.toPNG())
 })
 
-ipcMain.handle('print', async (e) => {
-  return new Promise((resolve) => {
-    e.sender.print({ silent: false, printBackground: true }, (success, reason) => resolve({ success, reason }))
-  })
-})
+ipcMain.handle('print', (e) => onWhitePaper(e, () => new Promise((resolve) => {
+  e.sender.print({ silent: false, printBackground: true }, (success, reason) => resolve({ success, reason }))
+})))
 
 ipcMain.handle('win:state', (e, { title, dirty, filePath }) => {
   const win = BrowserWindow.fromWebContents(e.sender)
