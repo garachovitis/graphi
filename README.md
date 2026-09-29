@@ -15,6 +15,8 @@ npm run dist:win     # NSIS installer + portable
 npm run dist:linux   # AppImage, .deb, .rpm
 ```
 
+Για νέα έκδοση με `.exe` στο GitHub Releases (αυτόματο build μέσω GitHub Actions) βλ. [RELEASING.md](RELEASING.md).
+
 ## Τεχνολογίες
 
 TypeScript · React 19 · TipTap 3 / ProseMirror · Electron 44 · Capacitor 8 · Vite 8 · `docx` · JSZip.
