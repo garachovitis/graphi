@@ -204,12 +204,8 @@ export function ProofPanel({ api, onClose }: { api: AppApi; onClose: () => void 
           <input type="checkbox" checked={cfg.live} onChange={(e) => setOpt({ live: e.target.checked })} />
           <span>{t('pf.live')}</span>
         </label>
-        <label className="pp-opt" title={t('pf.onlineHint')}>
-          <input type="checkbox" checked={cfg.online} onChange={(e) => setOpt({ online: e.target.checked })} />
-          <span>{t('pf.online')}</span>
-        </label>
         <div className="pp-privacy">
-          <ShieldCheck size={13} /> {cfg.online ? t('pf.onlineHint') : t('pf.private')}
+          <ShieldCheck size={13} /> {t('pf.private')}
         </div>
       </footer>
     </aside>

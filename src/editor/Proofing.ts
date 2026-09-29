@@ -8,8 +8,6 @@ import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { checkText, type TextIssue, type IssueKind } from '../proofing/rules'
 import { addUserWord, dictReady, loadEnglish, loadGreek, onUserDictChange } from '../proofing/dictionary'
-import { ltCached, ltCheck } from '../proofing/languagetool'
-import { getLang } from '../i18n'
 
 export type { IssueKind }
 
@@ -37,10 +35,10 @@ export const proofKey = new PluginKey<ProofState>('proofing')
 
 // ───────────── settings (per device) & runtime switches ─────────────
 
-export interface ProofConfig { live: boolean; online: boolean }
+export interface ProofConfig { live: boolean }
 const CONFIG_KEY = 'grafi:proofing'
 const readConfig = (): ProofConfig => {
-  try { return { live: true, online: false, ...JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}') } } catch { return { live: true, online: false } }
+  try { return { live: JSON.parse(localStorage.getItem(CONFIG_KEY) || '{}').live ?? true } } catch { return { live: true } }
 }
 let config = readConfig()
 let panelOpen = false
@@ -111,17 +109,12 @@ function localIssues(b: Block): TextIssue[] {
   return hit
 }
 
-function computeIssues(doc: PMNode): { issues: Issue[]; paragraphs: string[] } {
+function computeIssues(doc: PMNode): Issue[] {
   const issues: Issue[] = []
   const seen = new Map<string, number>()
   const blocks = collect(doc)
   for (const b of blocks) {
-    let list = localIssues(b)
-    if (config.online) {
-      const lt = ltCached(b.text)
-      // the offline rules win where both flag the same text
-      if (lt?.length) list = [...list, ...lt.filter((x) => !list.some((y) => x.start < y.end && x.end > y.start))].sort((a, c) => a.start - c.start)
-    }
+    const list = localIssues(b)
     for (const i of list) {
       const text = b.text.slice(i.start, i.end)
       if (ignored.has(ignoreKey({ rule: i.rule, text }))) continue
@@ -134,7 +127,7 @@ function computeIssues(doc: PMNode): { issues: Issue[]; paragraphs: string[] } {
       })
     }
   }
-  return { issues, paragraphs: blocks.map((b) => b.text) }
+  return issues
 }
 
 // ───────────── plugin ─────────────
@@ -224,12 +217,7 @@ export const Proofing = Extension.create({
             }
             if (!dictReady.en() && /[A-Za-z]{2}/.test(view.state.doc.textContent)) await loadEnglish()
             if (my !== seq || view.isDestroyed) return
-            const { issues, paragraphs } = computeIssues(view.state.doc)
-            set({ issues, status: 'ready' })
-            if (config.online) {
-              const changed = await ltCheck(paragraphs, getLang())
-              if (changed && my === seq && !view.isDestroyed) set({ issues: computeIssues(view.state.doc).issues })
-            }
+            set({ issues: computeIssues(view.state.doc), status: 'ready' })
           }
           const schedule = (ms: number) => { clearTimeout(timer); timer = window.setTimeout(run, ms) }
           const refresh = () => {

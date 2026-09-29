@@ -335,8 +335,6 @@ export const en: Record<Key, string> = {
   'pf.addSpace': 'Add space',
   'pf.noSugg': 'No automatic fix — correct it in the text.',
   'pf.live': 'Underline as you type',
-  'pf.online': 'Deeper grammar check (online)',
-  'pf.onlineHint': 'Sends paragraphs to LanguageTool for extra rules. Without it, checking happens entirely on your device.',
   'pf.private': 'Checking happens on your device — your text never leaves it.',
   'pf.keys': '↑↓ next · ↵ accept · ⌫ ignore',
   'pf.more': 'All issues',

@@ -14,7 +14,7 @@ export interface TextIssue {
   sugg: string[]
   /** mechanical, unambiguous fix — included in "Fix all" */
   safe?: boolean
-  /** free-text explanation (online checker) instead of the i18n one */
+  /** free-text explanation instead of the i18n one */
   msg?: string
   title?: string
 }
