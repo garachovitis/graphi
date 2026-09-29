@@ -15,7 +15,7 @@ export type ToWorker =
 export type FromWorker =
   | { type: 'progress'; file: string; loaded: number; total: number }
   | { type: 'loading' }
-  | { type: 'ready' }
+  | { type: 'ready'; ms: number }
   | { type: 'result'; id: number; text: string }
   | { type: 'error'; message: string; id?: number }
 
@@ -28,15 +28,18 @@ async function load(plan: Plan) {
     device: plan.device,
     dtype: plan.dtype as any,
     progress_callback: (p: any) => {
-      if (p.status === 'progress' && p.total) post({ type: 'progress', file: p.file, loaded: p.loaded, total: p.total })
+      // Only files fetched from the network count as a download (cached ones report progress too).
       if (p.status === 'download') fromNet.add(p.file)
+      if (p.status === 'progress' && p.total && fromNet.has(p.file)) post({ type: 'progress', file: p.file, loaded: p.loaded, total: p.total })
       if (p.status === 'done' && fromNet.has(p.file)) fromNet.delete(p.file)
       if (p.status === 'ready' || (p.status === 'done' && !fromNet.size)) post({ type: 'loading' })
     },
   }) as AutomaticSpeechRecognitionPipeline
-  // Compile the GPU shaders now, not on the user's first sentence.
+  // Compile the GPU shaders now, not on the user's first sentence; the second run shows the real speed.
   await asr(new Float32Array(16000), { language: 'greek', task: 'transcribe' } as any)
-  post({ type: 'ready' })
+  const t = performance.now()
+  await asr(new Float32Array(16000), { language: 'greek', task: 'transcribe' } as any)
+  post({ type: 'ready', ms: performance.now() - t })
 }
 
 self.onmessage = async (e: MessageEvent<ToWorker>) => {

@@ -5,14 +5,11 @@ import workletUrl from './capture.worklet.ts?worker&url'
 import type { FromWorker, Plan, ToWorker } from './whisper.worker'
 import type { Session, Sink, StartOpts } from './engines'
 import { cleanTranscript } from './text'
+import { FRAME, Segmenter, downsampler } from './vad'
 
-const RATE = 16000
-const FRAME = 480 // 30 ms
-const PREROLL = 10 // frames kept from before speech starts (300 ms)
-const END_SILENCE = 24 // frames of quiet that end a phrase (720 ms)
-const MAX_FRAMES = Math.floor(25_000 / 30) // Whisper's window is 30 s
-const MIN_VOICED = 8 // shorter blips (clicks, breaths) are dropped
-const PARTIAL_EVERY = 1000
+// Live previews re-run the whole phrase; only worth it where the model answers quickly.
+const PREVIEW_EVERY = 1000
+const PREVIEW_MAX_MS = 1500
 
 // Greek needs a large model: large-v3-turbo is the smallest Whisper that writes Greek reliably.
 // It needs WebGPU; plain CPU (WASM) gets whisper-small, slower and less accurate but usable.
@@ -50,6 +47,7 @@ const IDLE_MS = 5 * 60_000
 let worker: Worker | null = null
 let ready: Promise<void> | null = null
 let idleTimer = 0
+let warmMs = Infinity // time of the warm-up run: tells whether live previews can keep up
 const listeners = new Set<(m: FromWorker) => void>()
 
 function getWorker(sink: Sink) {
@@ -69,7 +67,7 @@ function getWorker(sink: Sink) {
           files.forEach(([a, b]) => { got += a; all += b })
           sink.progress?.('download', all ? got / all : 0)
         } else if (m.type === 'loading') sink.progress?.('load', 0)
-        else if (m.type === 'ready') { listeners.delete(l); resolve() }
+        else if (m.type === 'ready') { warmMs = m.ms; listeners.delete(l); resolve() }
         else if (m.type === 'error' && m.id == null) { listeners.delete(l); reject(new Error(m.message)) }
       }
       listeners.add(l)
@@ -78,29 +76,6 @@ function getWorker(sink: Sink) {
     ready.catch(() => { worker?.terminate(); worker = null; ready = null })
   }
   return ready
-}
-
-/** Streaming box-filter downsampler to 16 kHz (enough anti-aliasing for speech). */
-function downsampler(from: number) {
-  const ratio = from / RATE
-  let acc = 0, n = 0, pos = 0
-  return (x: Float32Array) => {
-    if (ratio <= 1) return x
-    const out = new Float32Array(Math.ceil(x.length / ratio) + 1)
-    let k = 0
-    for (let i = 0; i < x.length; i++) {
-      acc += x[i]; n++; pos++
-      if (pos >= ratio) { pos -= ratio; out[k++] = acc / n; acc = 0; n = 0 }
-    }
-    return out.subarray(0, k)
-  }
-}
-
-const concat = (frames: Float32Array[]) => {
-  const out = new Float32Array(frames.reduce((s, f) => s + f.length, 0))
-  let o = 0
-  for (const f of frames) { out.set(f, o); o += f.length }
-  return out
 }
 
 export async function startWhisper(o: StartOpts, sink: Sink): Promise<Session> {
@@ -124,6 +99,7 @@ export async function startWhisper(o: StartOpts, sink: Sink): Promise<Session> {
   let seq = 0
   const pending = new Map<number, 'final' | number>() // id → 'final' or the segment a preview belongs to
   let previewBusy = false
+  const sentAt = new Map<number, number>()
   let finalsLeft = 0
   let drained: (() => void) | null = null
   const onMsg = (m: FromWorker) => {
@@ -132,60 +108,39 @@ export async function startWhisper(o: StartOpts, sink: Sink): Promise<Session> {
     pending.delete(m.id)
     const text = m.type === 'result' ? cleanTranscript(m.text) : ''
     if (kind === 'final') {
+      finalMs = performance.now() - (sentAt.get(m.id) ?? performance.now())
+      sentAt.delete(m.id)
       if (text) { sink.interim(''); sink.final(text) }
       if (--finalsLeft === 0) { sink.busy?.(false); drained?.() }
     } else {
       previewBusy = false
-      if (kind === segId && speaking && text) sink.interim(text)
+      if (kind === segId && vad.speaking && text) sink.interim(text)
     }
   }
   listeners.add(onMsg)
   const send = (audio: Float32Array, kind: 'final' | number) => {
     const id = ++seq
     pending.set(id, kind)
+    if (kind === 'final') { finalsLeft++; sink.busy?.(true); sentAt.set(id, performance.now()) }
     worker!.postMessage({ type: 'run', id, audio, lang: o.lang } satisfies ToWorker, [audio.buffer])
   }
 
-  // Voice activity: energy against an adaptive noise floor.
-  let noise = 0.003
-  let speaking = false
+  const vad = new Segmenter()
   let segId = 0
-  let seg: Float32Array[] = []
-  let voiced = 0
-  let quiet = 0
   let lastPreview = 0
-  const pre: Float32Array[] = []
-  const closeSegment = () => {
-    const frames = seg.slice(0, seg.length - Math.max(0, quiet - 7)) // keep ~200 ms of the trailing pause
-    const enough = voiced >= MIN_VOICED
-    speaking = false; seg = []; voiced = 0; quiet = 0; segId++
-    sink.interim('')
-    if (!enough) return
-    finalsLeft++
-    sink.busy?.(true)
-    send(concat(frames), 'final')
-  }
+  let finalMs = warmMs // how long the last phrase took to transcribe
   const onFrame = (f: Float32Array) => {
-    let e = 0
-    for (let i = 0; i < f.length; i++) e += f[i] * f[i]
-    const rms = Math.sqrt(e / f.length)
-    sink.level?.(Math.max(0, Math.min(1, (20 * Math.log10(rms + 1e-9) + 60) / 50)))
-    const isVoice = rms > Math.max(noise * 3, 0.008)
-    if (!speaking) {
-      noise = Math.max(0.001, noise * 0.95 + rms * 0.05)
-      pre.push(f)
-      if (pre.length > PREROLL) pre.shift()
-      if (isVoice && ++voiced >= 2) { speaking = true; seg = [...pre]; pre.length = 0; quiet = 0 }
-      else if (!isVoice) voiced = 0
-      return
-    }
-    seg.push(f)
-    if (isVoice) { voiced++; quiet = 0 } else quiet++
-    if (quiet >= END_SILENCE || seg.length >= MAX_FRAMES) closeSegment()
-    else if (plan.device === 'webgpu' && !previewBusy && !finalsLeft && seg.length > 40 && performance.now() - lastPreview > PARTIAL_EVERY) {
+    const r = vad.push(f)
+    sink.level?.(r.level)
+    if (r.phrase !== undefined) {
+      segId++
+      sink.interim('')
+      if (r.phrase) send(r.phrase, 'final')
+    } else if (vad.speaking && plan.device === 'webgpu' && finalMs < PREVIEW_MAX_MS && !previewBusy && !finalsLeft
+      && vad.frames > 40 && performance.now() - lastPreview > PREVIEW_EVERY) {
       previewBusy = true
       lastPreview = performance.now()
-      send(concat(seg), segId)
+      send(vad.current(), segId)
     }
   }
 
@@ -217,7 +172,10 @@ export async function startWhisper(o: StartOpts, sink: Sink): Promise<Session> {
     async stop() {
       node.port.onmessage = null
       src.disconnect(); node.disconnect(); release(); ctx.close()
-      if (speaking) closeSegment()
+      if (vad.speaking) {
+        const last = vad.close()
+        if (last) send(last, 'final')
+      }
       // Let the last phrase land before reporting "stopped".
       if (finalsLeft) await Promise.race([new Promise<void>((r) => { drained = r }), new Promise((r) => setTimeout(r, 30_000))])
       listeners.delete(onMsg)

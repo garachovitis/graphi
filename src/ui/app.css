@@ -88,14 +88,15 @@ input, select, textarea { font: inherit; color: var(--text); }
 @keyframes cmd-flash { 0%, 60% { box-shadow: 0 0 0 2px var(--teal-500); background: var(--pressed); } 100% { box-shadow: 0 0 0 2px transparent; } }
 .cmd-flash { animation: cmd-flash 1.8s ease-out; border-radius: 4px; }
 
-.tabs { display: flex; align-items: flex-end; gap: 2px; padding: 0 8px; height: 32px; }
-.tab { border: none; background: transparent; color: #fff; padding: 6px 14px 7px; border-radius: 6px 6px 0 0; cursor: pointer; font-weight: 600; text-shadow: 0 1px 1px rgba(6, 47, 45, .35); }
+/* Pill tabs, detached from the ribbon (own look, not Office's folder tabs). */
+.tabs { display: flex; align-items: center; justify-content: safe center; gap: 4px; padding: 0 8px 4px; height: 36px; }
+.tab { border: none; background: transparent; color: #fff; padding: 5px 14px; border-radius: 8px; cursor: pointer; font-weight: 600; text-shadow: 0 1px 1px rgba(6, 47, 45, .35); }
 .tab:hover { background: rgba(255,255,255,.14); }
 .tab.active { background: var(--ribbon); color: var(--accent); font-weight: 600; text-shadow: none; }
 .tab.file-tab { background: var(--teal-900); color: #fff; font-weight: 600; }
 .tab.file-tab:hover { background: var(--teal-950); }
-.tab.contextual { color: #fff; box-shadow: inset 0 -3px 0 rgba(255,255,255,.6); }
-.tab.contextual.active { color: var(--accent); box-shadow: inset 0 3px 0 var(--teal-500); }
+.tab.contextual { color: #fff; box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.6); }
+.tab.contextual.active { color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--teal-500); }
 
 /* ───────── ribbon ───────── */
 .ribbon { display: flex; align-items: stretch; background: var(--ribbon); color: var(--text); border-bottom: 1px solid var(--border);
@@ -554,7 +555,7 @@ kbd { font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--chr
   .qat-state { display: none; }
   .tabs { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
   .tabs::-webkit-scrollbar { display: none; }
-  .tab { flex: 0 0 auto; padding: 6px 11px 7px; }
+  .tab { flex: 0 0 auto; padding: 5px 11px; }
   .ribbon { min-height: 0; padding-bottom: 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
   .ribbon::-webkit-scrollbar { display: none; }
   .rb-group-label { display: none; }
@@ -591,12 +592,12 @@ kbd { font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--chr
 .m-icon { border: none; background: transparent; color: #fff; width: 38px; height: 34px; border-radius: 8px; display: grid; place-items: center; cursor: pointer; }
 .m-icon:active { background: rgba(255,255,255,.2); }
 .m-icon:disabled { opacity: .45; }
-.m-tabs { display: flex; gap: 2px; padding: 0 6px; overflow-x: auto; scrollbar-width: none; }
+.m-tabs { display: flex; gap: 4px; padding: 0 6px 5px; overflow-x: auto; scrollbar-width: none; }
 .m-tabs::-webkit-scrollbar { display: none; }
-.m-tab { flex: 1 0 auto; border: none; background: transparent; color: #fff; font-weight: 600; font-size: 13px; padding: 7px 8px 8px; border-radius: 8px 8px 0 0; text-shadow: 0 1px 1px rgba(6,47,45,.35); }
+.m-tab { flex: 1 0 auto; border: none; background: transparent; color: #fff; font-weight: 600; font-size: 13px; padding: 6px 10px; border-radius: 8px; text-shadow: 0 1px 1px rgba(6,47,45,.35); }
 .m-tab.active { background: var(--ribbon); color: var(--accent); text-shadow: none; }
-.m-tab.ctx { box-shadow: inset 0 -3px 0 rgba(255,255,255,.7); }
-.m-tab.ctx.active { box-shadow: inset 0 3px 0 var(--primary); }
+.m-tab.ctx { box-shadow: inset 0 0 0 1.5px rgba(255,255,255,.7); }
+.m-tab.ctx.active { box-shadow: inset 0 0 0 1.5px var(--primary); }
 .m-tools { display: grid; grid-template-columns: repeat(auto-fill, minmax(60px, 1fr)); gap: 4px; padding: 6px 6px 8px; background: var(--ribbon); border-bottom: 1px solid var(--border);
   padding-left: max(6px, env(safe-area-inset-left)); padding-right: max(6px, env(safe-area-inset-right)); }
 .m-drop { display: flex; min-width: 0; } .m-drop > .m-btn { flex: 1 1 auto; min-width: 0; }
@@ -689,7 +690,7 @@ kbd { font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--chr
 .tm-bar b { margin-left: auto; width: 28%; height: 34%; border-radius: 3px; background: rgba(255,255,255,.3); }
 .tm-tabs { flex: 0 0 8%; min-height: 0; display: flex; align-items: center; gap: 2%; padding: 0 4%; background: #1ab3ac; }
 .tm-tabs em { width: 12%; height: 40%; border-radius: 2px; background: rgba(255,255,255,.55); }
-.tm-tabs em.on { align-self: stretch; height: auto; border-radius: 4px 4px 0 0; background: var(--m-ribbon); box-shadow: inset 0 2px 0 var(--m-tab); }
+.tm-tabs em.on { border-radius: 3px; background: var(--m-ribbon); }
 .tm-ribbon { flex: 0 0 14%; display: flex; align-items: center; gap: 3%; padding: 0 5%; background: var(--m-ribbon); border-bottom: 1px solid var(--m-line); }
 .tm-ribbon u { width: 7%; aspect-ratio: 1; border-radius: 3px; opacity: .9; }
 .tm-ribbon s { width: 1px; height: 55%; background: var(--m-line); }
