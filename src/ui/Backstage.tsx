@@ -86,7 +86,7 @@ export function Backstage({ api, page, setPage, onClose }: { api: AppApi; page: 
         <button className="bs-nav-item" onClick={onClose}><X size={17} /><span>{t('bs.close')}</span></button>
       </aside>
       <main className="bs-main">
-        {page === 'home' && (<><div className="bs-home-head"><div className="bs-home-brand"><img className="bs-logo" src="./icons/logo-mark.png" alt="Grafi" draggable={false} /><h1>{t('bs.welcome')}</h1></div><div className="bs-home-switches"><LangSwitch /><ThemeSwitch onMore={() => setPage('appearance')} /></div></div><h2>{t('bs.startTemplate')}</h2><Templates /><h2>{t('bs.recent')}</h2><Recent /></>)}
+        {page === 'home' && (<><div className="bs-home-head"><div className="bs-home-brand"><img className="bs-logo" src="./icons/logo-mark.png" alt="Grafi" draggable={false} /><h1>{t('bs.welcome')}</h1></div><div className="bs-home-switches"><LangSwitch /><ThemeSwitch onMore={() => setPage('appearance')} /></div></div><h2>{t('bs.startTemplate')}</h2><Templates /><h2>{t('bs.recent')}</h2><Recent /><div className="bs-credit">made by dotgiar</div></>)}
         {page === 'appearance' && (
           <>
             <h1>{t('bs.options')}</h1>

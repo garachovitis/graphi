@@ -362,6 +362,7 @@ button.sb-item:hover, .sb-icon:hover { background: rgba(255,255,255,.14); }
 .bs-nav-spacer { flex: 1; }
 .bs-main { flex: 1 1 auto; overflow: auto; padding: 28px 44px; }
 .bs-main h1 { font-size: 28px; font-weight: 300; margin: 0 0 6px; color: var(--accent-strong); }
+.bs-credit { position: fixed; right: 16px; bottom: calc(10px + env(safe-area-inset-bottom)); font-size: 12px; color: var(--muted); opacity: .8; pointer-events: none; user-select: none; }
 .bs-main h2 { font-size: 15px; font-weight: 700; margin: 22px 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 .bs-templates { display: flex; flex-wrap: wrap; gap: 20px; }
 .bs-template { width: 150px; border: none; background: transparent; cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 3px; padding: 0; color: var(--text); }
