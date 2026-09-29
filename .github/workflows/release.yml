@@ -1,0 +1,87 @@
+name: Release (Windows + macOS)
+
+# Τρέχει όταν σπρώχνεται tag τύπου v1.2.3 (δημιουργεί GitHub Release με .exe + .dmg/.zip),
+# ή χειροκίνητα από το tab Actions (μόνο build — τα αρχεία μένουν ως artifacts του run).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            name: grafi-windows
+            script: dist:win
+            files: |
+              release/*.exe
+              release/*.blockmap
+              release/latest.yml
+          - os: macos-latest
+            name: grafi-macos
+            script: dist:mac
+            files: |
+              release/*.dmg
+              release/*.zip
+              release/*.blockmap
+              release/latest-mac.yml
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Έλεγχος ότι το tag ταιριάζει με το version του package.json
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        run: |
+          PKG="v$(node -p "require('./package.json').version")"
+          if [ "$PKG" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Το tag είναι $GITHUB_REF_NAME αλλά το package.json λέει $PKG. Τρέξε 'npm version <x.y.z>' πριν το tag."
+            exit 1
+          fi
+
+      - run: npm ci
+
+      - name: Build (Vite + electron-builder)
+        run: npm run ${{ matrix.script }} -- --publish never
+        env:
+          # Windows: χωρίς πιστοποιητικό το .exe βγαίνει ανυπόγραφο (SmartScreen warning).
+          # Αν προστεθούν τα secrets WIN_CSC_LINK / WIN_CSC_KEY_PASSWORD, υπογράφεται αυτόματα.
+          # macOS: ad-hoc υπογραφή (mac.identity "-" στο package.json), χωρίς notarization.
+          CSC_LINK: ${{ matrix.os == 'windows-latest' && secrets.WIN_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.os == 'windows-latest' && secrets.WIN_CSC_KEY_PASSWORD || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Grafi ${{ github.ref_name }}
+          generate_release_notes: true
+          files: out/*

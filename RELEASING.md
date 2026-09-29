@@ -1,14 +1,16 @@
-# Release για Windows (.exe)
+# Release για Windows (.exe) και macOS (.dmg)
 
-Τα Windows builds γίνονται αυτόματα στο GitHub Actions από το
-[`.github/workflows/release-windows.yml`](.github/workflows/release-windows.yml), σε `windows-latest` runner.
+Τα builds γίνονται αυτόματα στο GitHub Actions από το
+[`.github/workflows/release.yml`](.github/workflows/release.yml), σε `windows-latest` και `macos-latest` runners.
 Βγαίνουν:
 
 | Αρχείο | Τι είναι |
 |---|---|
 | `Grafi Setup x.y.z.exe` | Installer NSIS (x64 + arm64), με επιλογή φακέλου και συντόμευση στην επιφάνεια εργασίας |
 | `Grafi x.y.z.exe` | Portable (x64), τρέχει χωρίς εγκατάσταση |
-| `*.blockmap`, `latest.yml` | Μεταδεδομένα του electron-builder (για μελλοντικό auto-update) |
+| `Grafi-x.y.z-arm64.dmg` / `Grafi-x.y.z.dmg` | macOS installer για Apple Silicon / Intel |
+| `Grafi-x.y.z-arm64-mac.zip` / `Grafi-x.y.z-mac.zip` | Το ίδιο app σε zip (για μελλοντικό auto-update) |
+| `*.blockmap`, `latest.yml`, `latest-mac.yml` | Μεταδεδομένα του electron-builder (για μελλοντικό auto-update) |
 
 ## Νέα έκδοση — βήμα προς βήμα
 
@@ -18,7 +20,7 @@ npm version 1.0.1          # ενημερώνει package.json + package-lock, �
 git push --follow-tags     # σπρώχνει το commit και το tag
 ```
 
-1. Το push του tag `v1.0.1` ξεκινά το workflow **Release Windows (.exe)** (tab *Actions* στο GitHub).
+1. Το push του tag `v1.0.1` ξεκινά το workflow **Release (Windows + macOS)** (tab *Actions* στο GitHub).
 2. Σε ~10 λεπτά εμφανίζεται στο *Releases* το **Grafi v1.0.1** με τα `.exe` και αυτόματες release notes.
 3. Αν θες, κάνε *Edit* στο release για να γράψεις σημειώσεις με το χέρι.
 
@@ -27,7 +29,7 @@ git push --follow-tags     # σπρώχνει το commit και το tag
 
 ## Δοκιμαστικό build χωρίς release
 
-*Actions → Release Windows (.exe) → Run workflow*. Τα `.exe` βγαίνουν ως artifact **grafi-windows**
+*Actions → Release (Windows + macOS) → Run workflow*. Τα αρχεία βγαίνουν ως artifacts **grafi-windows** και **grafi-macos**
 στη σελίδα του run (δεν δημιουργείται release).
 
 ## Τοπικά
@@ -50,6 +52,12 @@ npm run dist:win           # τα αρχεία βγαίνουν στο release/
 - `WIN_CSC_KEY_PASSWORD` — ο κωδικός του `.pfx`
 
 Το workflow τα διαβάζει αυτόματα· δεν χρειάζεται άλλη αλλαγή.
+
+## macOS: υπογραφή
+
+Το app υπογράφεται ad-hoc (`mac.identity: "-"`), χωρίς Apple Developer ID / notarization. Την πρώτη φορά
+το macOS λέει ότι δεν μπορεί να επαληθεύσει τον δημιουργό: *δεξί κλικ στο Grafi → Άνοιγμα*, ή
+*Ρυθμίσεις → Απόρρητο και ασφάλεια → Άνοιγμα οπωσδήποτε*.
 
 ## Αν κάτι πάει στραβά
 
