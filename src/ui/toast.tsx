@@ -5,16 +5,18 @@ interface ToastAction { label: string; run: () => void }
 interface T { id: number; text: string; kind: 'info' | 'warn'; action?: ToastAction }
 let items: T[] = []
 let nextId = 1
+const MAX_VISIBLE = 3
 const listeners = new Set<() => void>()
 const emit = () => listeners.forEach((l) => l())
 const dismiss = (id: number) => { items = items.filter((t) => t.id !== id); emit() }
 
-export function toast(text: string, kind: 'info' | 'warn' = 'info', action?: ToastAction) {
+export function toast(text: string, kind: 'info' | 'warn' = 'info', action?: ToastAction, ms?: number) {
   const id = nextId++
-  items = [...items, { id, text, kind, action }]
+  // A repeated message replaces the older copy; at most three are on screen at once.
+  items = [...items.filter((t) => t.text !== text), { id, text, kind, action }].slice(-MAX_VISIBLE)
   emit()
   // Toasts with an action stay long enough to reach the button.
-  setTimeout(() => dismiss(id), kind === 'warn' || action ? 7000 : 3500)
+  setTimeout(() => dismiss(id), ms ?? (kind === 'warn' || action ? 7000 : 3500))
 }
 
 export function Toasts() {

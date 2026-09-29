@@ -22,6 +22,13 @@ const pendingOpen = []
 const closeApproved = new WeakSet()
 /** Set while the user is quitting the app (Cmd+Q / menu), so approved closes continue the quit. */
 let quitting = false
+/**
+ * Paths the renderer may read or overwrite without a dialog: files the user picked, saved,
+ * opened from the OS or from the recent list. Anything else goes through a native dialog.
+ */
+const granted = new Set()
+const grant = (p) => { granted.add(path.resolve(p)); return p }
+const isGranted = (p) => typeof p === 'string' && (granted.has(path.resolve(p)) || readRecent().includes(p))
 
 // ───────────────────────── recent files ─────────────────────────
 const recentFile = () => path.join(app.getPath('userData'), 'recent.json')
@@ -53,7 +60,7 @@ function createWindow(openPath) {
   const win = new BrowserWindow({
     width: 1360,
     height: 900,
-    minWidth: 900,
+    minWidth: 480,
     minHeight: 600,
     title: 'Grafi',
     // Packaged builds take the icon from electron-builder; this covers `npm run dev` on Windows / Linux.
@@ -107,6 +114,7 @@ function createWindow(openPath) {
 }
 
 async function sendOpenPath(win, p) {
+  grant(p)
   try {
     const data = await fs.readFile(p)
     win.webContents.send('file:opened', { path: p, name: path.basename(p), data: new Uint8Array(data) })
@@ -124,7 +132,7 @@ function openInWindow(p) {
   const win = focusedOrFirst()
   if (!win) return createWindow(p)
   // The renderer decides: reuse this window if its document is pristine, otherwise spawn a new one.
-  win.webContents.send('file:open-request', p)
+  win.webContents.send('file:open-request', grant(p))
 }
 
 // ───────────────────────── context menu (spell-check) ─────────────────────────
@@ -264,15 +272,8 @@ function buildMenu() {
       label: t('tools'),
       submenu: [
         { label: t('wordCount'), accelerator: 'CmdOrCtrl+Shift+G', click: send('wordCount') },
-        {
-          label: t('spellLang'),
-          submenu: [
-            { label: t('spellElEn'), click: () => setSpellLangs(['el', 'en-US']) },
-            { label: t('spellEl'), click: () => setSpellLangs(['el']) },
-            { label: t('spellEnUS'), click: () => setSpellLangs(['en-US']) },
-            { label: t('spellEnGB'), click: () => setSpellLangs(['en-GB']) },
-          ],
-        },
+        // Grafi's own checker (src/editor/Proofing.ts) — Greek + English, same on every OS
+        { label: t('proofing'), accelerator: 'F7', click: send('proofing') },
         {
           label: t('displayLang'),
           submenu: Object.entries(LANG_NAMES).map(([id, name]) => ({
@@ -321,13 +322,14 @@ ipcMain.handle('file:open-dialog', async (e) => {
     ],
   })
   if (res.canceled || !res.filePaths[0]) return null
-  const p = res.filePaths[0]
+  const p = grant(res.filePaths[0])
   const data = await fs.readFile(p)
   addRecent(p)
   return { path: p, name: path.basename(p), data: new Uint8Array(data) }
 })
 
 ipcMain.handle('file:read', async (_e, p) => {
+  if (!isGranted(p)) throw new Error(t('openFailed'))
   const data = await fs.readFile(p)
   addRecent(p)
   return { path: p, name: path.basename(p), data: new Uint8Array(data) }
@@ -336,14 +338,14 @@ ipcMain.handle('file:read', async (_e, p) => {
 /** Save bytes. If `path` is given and `dialog` is false, write directly; otherwise show a save dialog. */
 ipcMain.handle('file:save', async (e, { filePath, suggestedName, kind, data, askPath }) => {
   let target = filePath
-  if (askPath || !target) {
+  if (askPath || !target || !isGranted(target)) {
     const win = BrowserWindow.fromWebContents(e.sender)
     const res = await dialog.showSaveDialog(win, {
       defaultPath: suggestedName,
       filters: [filters()[kind] || filters().docx],
     })
     if (res.canceled || !res.filePath) return null
-    target = res.filePath
+    target = grant(res.filePath)
   }
   await fs.writeFile(target, Buffer.from(data))
   if (kind !== 'pdf') addRecent(target)
@@ -389,7 +391,7 @@ ipcMain.handle('win:state', (e, { title, dirty, filePath }) => {
   }
 })
 
-ipcMain.handle('win:new', (_e, openPath) => { createWindow(openPath || undefined) })
+ipcMain.handle('win:new', (_e, openPath) => { createWindow(isGranted(openPath) ? openPath : undefined) })
 
 ipcMain.handle('win:close-now', (e) => {
   const win = BrowserWindow.fromWebContents(e.sender)
@@ -423,10 +425,10 @@ ipcMain.handle('dialog:error', async (e, message) => {
 ipcMain.handle('app:lang', (_e, l) => applyLanguage(l))
 ipcMain.handle('recent:list', () => readRecent().filter((p) => fsSync.existsSync(p)))
 ipcMain.handle('shell:open', (_e, url) => { if (/^(https?|mailto):/i.test(url)) shell.openExternal(url) })
-ipcMain.handle('shell:reveal', (_e, p) => shell.showItemInFolder(p))
+ipcMain.handle('shell:reveal', (_e, p) => { if (isGranted(p)) shell.showItemInFolder(p) })
 
 // ───────────────────────── lifecycle ─────────────────────────
-if (process.env.GRAFI_SELFTEST) require('./selftest.cjs')(process.env.GRAFI_SELFTEST)
+if (process.env.GRAFI_SELFTEST) require('./selftest.cjs')(process.env.GRAFI_SELFTEST, grant)
 
 function fileArgs(argv) {
   return argv.slice(app.isPackaged ? 1 : 2).filter((a) => OPENABLE.includes(path.extname(a).toLowerCase()) && fsSync.existsSync(a))
@@ -436,7 +438,7 @@ if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
   app.on('second-instance', (_e, argv) => {
-    const files = fileArgs(argv)
+    const files = fileArgs(argv).map(grant)
     if (files.length) files.forEach((f) => createWindow(f))
     else {
       const w = focusedOrFirst()
@@ -453,16 +455,16 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     if (!app.isPackaged && isMac) app.dock?.setIcon(DEV_ICON)
     // Local Font Access API → real list of installed fonts in the font picker.
-    session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
-      cb(permission === 'local-fonts' || permission === 'clipboard-read' || permission === 'clipboard-sanitized-write')
-    })
-    session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
-      permission === 'local-fonts' || permission === 'clipboard-read' || permission === 'clipboard-sanitized-write')
+    // Microphone (never camera) for Home ▸ Dictate; macOS asks the user once on first use.
+    const allowed = (permission, mediaTypes) => permission === 'local-fonts' || permission === 'clipboard-read' || permission === 'clipboard-sanitized-write'
+      || (permission === 'media' && (mediaTypes ?? ['audio']).every((m) => m === 'audio'))
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => cb(allowed(permission, details?.mediaTypes)))
+    session.defaultSession.setPermissionCheckHandler((_wc, permission, _origin, details) => allowed(permission, details?.mediaType ? [details.mediaType] : undefined))
     setLang(readPrefs().lang || 'el')
     setSpellLangs(['el', 'en-US'])
     buildMenu()
 
-    const files = [...pendingOpen, ...fileArgs(process.argv)]
+    const files = [...pendingOpen, ...fileArgs(process.argv)].map(grant)
     if (files.length) files.forEach((f) => createWindow(f))
     else createWindow()
 

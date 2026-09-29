@@ -15,14 +15,30 @@ export function Canvas({ api }: { api: AppApi }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const colRef = useRef<HTMLDivElement>(null)
   const [colH, setColH] = useState(0)
+  const [scrollW, setScrollW] = useState(0)
 
-  const pageW = mmToPx(s.width)
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const measure = () => setScrollW(el.clientWidth)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    window.addEventListener('resize', measure)
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure) }
+  }, [])
+
+  // Phones, web layout: the text reflows to the screen width (Word's mobile view), so it stays
+  // readable at 100 % instead of showing a whole page at ~45 %.
+  const reflow = isReflow(view, scrollW)
+  const pad = 16 / zoom
+  const pageW = reflow ? scrollW / zoom : mmToPx(s.width)
   const pageH = mmToPx(s.height)
   const P = pageH + PAGE_GAP
-  const mt = mmToPx(s.margins.top)
-  const ml = mmToPx(s.margins.left)
-  const textW = mmToPx(s.width - s.margins.left - s.margins.right)
-  const mb = mmToPx(s.margins.bottom)
+  const mt = reflow ? pad : mmToPx(s.margins.top)
+  const ml = reflow ? pad : mmToPx(s.margins.left)
+  const textW = reflow ? pageW - 2 * pad : mmToPx(s.width - s.margins.left - s.margins.right)
+  const mb = reflow ? pad * 2 : mmToPx(s.margins.bottom)
 
   useEffect(() => {
     const el = colRef.current
@@ -70,7 +86,7 @@ export function Canvas({ api }: { api: AppApi }) {
       {api.showRuler && view === 'print' && <Ruler api={api} />}
       <div className="canvas-zoom" style={{ width: pageW * zoom, height: totalH * zoom }}>
         <div
-          className={`pages${api.showMarks ? ' show-marks' : ''}${view === 'web' ? ' layout-web' : ''}`}
+          className={`pages${api.showMarks ? ' show-marks' : ''}${view === 'web' ? ' layout-web' : ''}${reflow ? ' layout-reflow' : ''}`}
           style={{ width: pageW, height: totalH, transform: `scale(${zoom})` }}
           onMouseDown={onPageMouseDown}
         >
@@ -113,6 +129,11 @@ export function Canvas({ api }: { api: AppApi }) {
     </div>
   )
 }
+
+/** Web layout on a phone-sized canvas: text reflows to the screen instead of the page width. */
+export const isReflow = (view: 'print' | 'web', width = window.innerWidth) => view === 'web' && width > 0 && width < MOBILE_MAX
+
+export const MOBILE_MAX = 820
 
 /** Page index (1-based) that contains the selection head. */
 export function currentPage(api: AppApi): number {

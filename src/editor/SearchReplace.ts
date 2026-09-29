@@ -86,12 +86,15 @@ export const SearchReplace = Extension.create({
         state: {
           init: () => empty,
           apply(tr, prev) {
-            const meta = tr.getMeta(searchKey) as Partial<SearchState> | undefined
+            const meta = tr.getMeta(searchKey) as (Partial<SearchState> & { after?: number }) | undefined
             if (!meta && !tr.docChanged) return prev
-            const next = { ...prev, ...(meta || {}) }
+            const { after, ...opts } = meta || {}
+            const next = { ...prev, ...opts }
             if (!next.query) return { ...empty, ...next, matches: [], index: -1 }
             const matches = findMatches(tr.doc, next)
-            let index = meta?.index ?? prev.index
+            let index = opts.index ?? prev.index
+            // After a replacement: continue with the first match behind the inserted text.
+            if (after != null) index = Math.max(0, matches.findIndex((m) => m.from >= after))
             if (index >= matches.length) index = matches.length ? 0 : -1
             if (index < 0 && matches.length) {
               const head = tr.selection.from
@@ -142,7 +145,11 @@ export const SearchReplace = Extension.create({
           const marks = state.doc.resolve(m.from + 1).marks()
           if (replacement) tr.replaceWith(m.from, m.to, state.schema.text(replacement, marks))
           else tr.delete(m.from, m.to)
-          tr.setMeta(searchKey, { index: s.index })
+          const after = m.from + replacement.length
+          const rest = findMatches(tr.doc, s)
+          const hit = rest[Math.max(0, rest.findIndex((x) => x.from >= after))]
+          if (hit) tr.setSelection(TextSelection.create(tr.doc, hit.from, hit.to)).scrollIntoView()
+          tr.setMeta(searchKey, { after })
           dispatch(tr)
         }
         return true

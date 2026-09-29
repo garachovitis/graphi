@@ -5,14 +5,14 @@ const { app, BrowserWindow } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 
-module.exports = function selftest(outDir) {
+module.exports = function selftest(outDir, grant) {
   app.on('browser-window-created', (_e, win) => {
     win.webContents.once('did-finish-load', async () => {
       const results = {}
       const js = (code) => win.webContents.executeJavaScript(code)
       try {
         await new Promise((r) => setTimeout(r, 2000))
-        const docx = path.join(outDir, 'selftest.docx')
+        const docx = grant(path.join(outDir, 'selftest.docx'))
         results.bridge = await js('typeof window.grafiNative === "object" && window.grafiNative.platform')
         results.save = await js(`(async () => {
           const F = await import('/src/io/formats.ts')
@@ -28,12 +28,14 @@ module.exports = function selftest(outDir) {
           const l = await F.loadFile(f.name, f.data)
           return l.doc.content[0].content[0].text
         })()`)
+        // Paths the user never picked stay out of reach of the renderer.
+        results.blocked = await js(`window.grafiNative.readFile(${JSON.stringify(__filename)}).then(() => false, () => true)`)
         const pdf = await js('window.grafiNative.renderPdf().then(b => Array.from(b.slice(0, 5)))')
         results.pdfMagic = String.fromCharCode(...pdf)
         await js('window.grafiNative.setWindowState({ title: "Selftest — Grafi", dirty: true, filePath: null })')
         results.title = win.getTitle()
         results.recent = await js(`window.grafiNative.recent().then(r => r.includes(${JSON.stringify(docx)}))`)
-        results.ok = results.bridge && results.fileOnDisk > 0 && results.reopen === 'Αυτοέλεγχος Grafi' && results.pdfMagic === '%PDF-' && results.recent
+        results.ok = results.bridge && results.fileOnDisk > 0 && results.reopen === 'Αυτοέλεγχος Grafi' && results.pdfMagic === '%PDF-' && results.recent && results.blocked
       } catch (err) {
         results.error = String(err && err.stack || err)
       }

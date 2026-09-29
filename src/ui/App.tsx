@@ -24,10 +24,14 @@ import { blobToDataUrl, loadImage } from '../io/images'
 import { canSaveInPlace, isNative, onLaunchFiles, platform, type PageSpec } from '../platform'
 import { captureFormat, applyFormat, type PaintedFormat } from '../editor/format'
 import { Ribbon } from './Ribbon'
-import { Canvas } from './Canvas'
+import { Canvas, isReflow } from './Canvas'
 import { StatusBar } from './StatusBar'
 import { Backstage, type BackstagePage } from './Backstage'
 import { FindBar } from './FindBar'
+import { DictationBar } from './DictationBar'
+import { dictation } from '../dictation'
+import { ProofPanel, ProofPopover } from './ProofPanel'
+import { proofConfig, setProofConfig, setProofPanelOpen } from '../editor/Proofing'
 import { Dialogs, type DialogState } from './dialogs'
 import { Toasts, toast } from './toast'
 import { TrainingCoach, lessonDoc } from './Training'
@@ -59,8 +63,12 @@ export interface AppApi {
   setShowRuler: (b: boolean) => void
   showMarks: boolean
   setShowMarks: (b: boolean) => void
+  /** proofing underlines as you type */
   spellcheck: boolean
   setSpellcheck: (b: boolean) => void
+  /** proofing side panel (Review ▸ Spelling & Grammar, F7) */
+  proofOpen: boolean
+  setProofOpen: (b: boolean) => void
   openDialog: (d: DialogState) => void
   openFind: (mode: 'find' | 'replace') => void
   openBackstage: (p: BackstagePage) => void
@@ -92,17 +100,46 @@ function resetHistory(editor: Editor) {
 
 let untitled = 1
 
+// Recovery snapshots: one key per window/tab. A live window with unsaved changes refreshes its
+// snapshot every RECOVERY_EVERY ms, so an older one belongs to a session that is gone.
+const RECOVERY_PREFIX = 'grafi:recovery:'
+const RECOVERY_KEY = RECOVERY_PREFIX + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+const RECOVERY_EVERY = 30000
+const dropRecovery = (key: string) => { try { localStorage.removeItem(key) } catch { /* private mode */ } }
+
+interface Recovery { at: number; name: string; settings: DocSettings; content: JSONContent }
+function takeAbandonedRecovery(): Recovery | null {
+  let best: Recovery | null = null
+  try {
+    const keys = Object.keys(localStorage).filter((k) => k.startsWith(RECOVERY_PREFIX) || k === 'grafi:recovery')
+    for (const k of keys) {
+      if (k === RECOVERY_KEY) continue
+      let r: Recovery | null = null
+      try { r = JSON.parse(localStorage.getItem(k) || 'null') } catch { /* corrupt */ }
+      if (r && Date.now() - r.at < RECOVERY_EVERY * 2) continue // another open window
+      localStorage.removeItem(k)
+      if (r?.content && (!best || r.at > best.at)) best = r
+    }
+  } catch { /* storage unavailable */ }
+  return best
+}
+
 export function App() {
   // Re-render the whole UI when the display language changes.
   const lang = useLang()
   const [settings, setSettingsRaw] = useState<DocSettings>(blankSettings)
   const [file, setFile] = useState<FileInfo>(() => ({ path: null, name: t('app.docName', { n: String(untitled) }), kind: null }))
   const [dirty, setDirty] = useState(false)
-  const [view, setView] = useState<'print' | 'web'>('print')
+  // Phones open in the reflowing mobile view; tablets and desktops in print layout.
+  const [view, setView] = useState<'print' | 'web'>(() => (window.matchMedia('(max-width: 599px)').matches ? 'web' : 'print'))
+  const viewRef = useRef(view)
+  viewRef.current = view
   const [zoom, setZoomRaw] = useState(1)
   const [showRuler, setShowRuler] = useState(true)
   const [showMarks, setShowMarks] = useState(false)
-  const [spellcheck, setSpellcheck] = useState(true)
+  const [spellcheck, setSpellcheckRaw] = useState(() => proofConfig().live)
+  const setSpellcheck = useCallback((b: boolean) => { setProofConfig({ live: b }); setSpellcheckRaw(b) }, [])
+  const [proofOpen, setProofOpen] = useState(false)
   const [dialog, setDialog] = useState<DialogState>(null)
   const [find, setFind] = useState<null | 'find' | 'replace'>(null)
   const [backstage, setBackstage] = useState<BackstagePage | null>(null)
@@ -136,7 +173,7 @@ export function App() {
     // Touch devices: don't pop the on-screen keyboard until the user taps the page.
     autofocus: window.matchMedia('(pointer: coarse)').matches ? false : 'start',
     editorProps: {
-      attributes: { class: 'doc-surface', spellcheck: 'true', 'aria-label': t('app.docAria') },
+      attributes: { class: 'doc-surface', spellcheck: 'false', 'aria-label': t('app.docAria') },
       handlePaste: (_view, event) => {
         const files = [...(event.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'))
         // Prefer rich HTML (e.g. from Word) when present; images alone → insert as pictures.
@@ -179,8 +216,11 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    editor?.view.dom.setAttribute('spellcheck', String(spellcheck))
-  }, [editor, spellcheck])
+    // Grafi's own checker (editor/Proofing.ts) replaces the browser's: one set of underlines, same on every platform.
+    editor?.view.dom.setAttribute('spellcheck', 'false')
+  }, [editor])
+
+  useEffect(() => { setProofPanelOpen(proofOpen) }, [proofOpen])
 
   // Document CSS + pagination geometry.
   useEffect(() => {
@@ -211,7 +251,7 @@ export function App() {
   }, [file, dirty, settings.title])
 
   // Manual zoom disables "fit page width" (the default on phones).
-  const autoFit = useRef(window.innerWidth < 820)
+  const autoFit = useRef(true)
   const setZoom = useCallback((z: number) => {
     autoFit.current = false
     setZoomRaw(Math.min(5, Math.max(0.1, Math.round(z * 100) / 100)))
@@ -219,14 +259,15 @@ export function App() {
 
   useEffect(() => {
     const fit = () => {
-      if (window.innerWidth >= 820 || !autoFit.current) return
+      if (!autoFit.current) return
+      if (window.innerWidth >= 820 || isReflow(view)) { setZoomRaw(1); return }
       const pageW = mmToPx(settings.width)
       setZoomRaw(Math.max(0.2, Math.floor(((window.innerWidth - 12) / pageW) * 100) / 100))
     }
     fit()
     window.addEventListener('resize', fit)
     return () => window.removeEventListener('resize', fit)
-  }, [settings.width])
+  }, [settings.width, view])
 
   // ───────────── document lifecycle ─────────────
   const loadInto = useCallback((loaded: Loaded, info: FileInfo) => {
@@ -236,7 +277,7 @@ export function App() {
     setPreview(null)
     setSettingsRaw(s)
     if (loaded.doc) editor.commands.setContent(loaded.doc, { emitUpdate: false })
-    else editor.commands.setContent(loaded.html || '', { emitUpdate: false })
+    else editor.commands.setContent(loaded.html || '', { emitUpdate: false, parseOptions: loaded.preserveWhitespace ? { preserveWhitespace: true } : undefined })
     resetHistory(editor)
     if (!window.matchMedia('(pointer: coarse)').matches) editor.commands.focus('start')
     setFile(info)
@@ -292,11 +333,16 @@ export function App() {
         return
       }
       start()
-    } else {
+    } else if (tpl.id === 'blank') {
       // Word opens a new window for a new document.
-      if (tpl.id === 'blank') platform.newWindow()
-      else start()
-    }
+      platform.newWindow()
+    } else if (dirty) {
+      platform.confirmUnsaved(file.name).then(async (a) => {
+        if (a === 'cancel') return
+        if (a === 'save' && !(await saveRef.current())) return
+        start()
+      })
+    } else start()
   }, [editor, loadInto, dirty, file])
 
   const startTraining = useCallback(async (lessonId = 'l1') => {
@@ -349,11 +395,15 @@ export function App() {
     }
   }, [editor, settings, file, saveAs])
 
+  /** Prepares the canvas for print / PDF; the returned function restores the mobile view. */
   const beforeOutput = async () => {
     setBackstage(null)
     editor?.commands.clearSearch()
+    const back = isReflow(viewRef.current) ? viewRef.current : null
+    if (back) setView('print') // paper output always comes from the paginated pages
     requestRelayout()
-    await new Promise((r) => setTimeout(r, 180))
+    await new Promise((r) => setTimeout(r, back ? 500 : 180))
+    return () => { if (back) setView(back) }
   }
 
   const pageSpec = (): PageSpec => {
@@ -369,12 +419,13 @@ export function App() {
   pageSpecRef.current = pageSpec
 
   const exportPdf = useCallback(async () => {
-    await beforeOutput()
+    const restore = await beforeOutput()
     // The PDF's Title comes from document.title: the document's name, not the window's "● … — Grafi".
     const winTitle = document.title
     document.title = settings.title || baseName(file.name)
     const bytes = await platform.renderPdf(pageSpecRef.current()).finally(() => { document.title = winTitle })
-    if (!bytes) { await platform.print(pageSpecRef.current()); return }
+    if (!bytes) { await platform.print(pageSpecRef.current()).finally(restore); return }
+    restore()
     const res = await platform.save({ suggestedName: `${baseName(file.name)}.pdf`, kind: 'pdf', data: bytes, askPath: true })
     if (res) toast(t('app.pdfExported', { name: res.name }))
   }, [file, settings.title])
@@ -382,8 +433,8 @@ export function App() {
   exportPdfRef.current = exportPdf
 
   const print = useCallback(async () => {
-    await beforeOutput()
-    const r = await platform.print(pageSpecRef.current())
+    const restore = await beforeOutput()
+    const r = await platform.print(pageSpecRef.current()).finally(restore)
     if (!r.success && r.reason && r.reason !== 'cancelled') toast(t('app.printFailed', { reason: r.reason }), 'warn')
   }, [])
 
@@ -461,13 +512,14 @@ export function App() {
       case 'redo': if (inField()) document.execCommand('redo'); else c().redo().run(); break
       case 'find': setFind('find'); break
       case 'replace': setFind('replace'); break
+      case 'dictate': void dictation.toggle(editor); break
       case 'viewPrint': setView('print'); break
       case 'viewWeb': setView('web'); break
       case 'toggleRuler': setShowRuler((x) => !x); break
       case 'toggleMarks': setShowMarks((x) => !x); break
-      case 'zoomIn': setZoomRaw((z) => ZOOMS.find((x) => x > z + 0.001) ?? z); break
-      case 'zoomOut': setZoomRaw((z) => [...ZOOMS].reverse().find((x) => x < z - 0.001) ?? z); break
-      case 'zoomReset': setZoomRaw(1); break
+      case 'zoomIn': autoFit.current = false; setZoomRaw((z) => ZOOMS.find((x) => x > z + 0.001) ?? z); break
+      case 'zoomOut': autoFit.current = false; setZoomRaw((z) => [...ZOOMS].reverse().find((x) => x < z - 0.001) ?? z); break
+      case 'zoomReset': setZoom(1); break
       case 'pageBreak': c().setPageBreak().run(); break
       case 'tableDialog': setDialog({ type: 'table' }); break
       case 'image': pickImage(); break
@@ -479,11 +531,12 @@ export function App() {
       case 'paragraphDialog': setDialog({ type: 'paragraph' }); break
       case 'pageSetup': setDialog({ type: 'pageSetup' }); break
       case 'wordCount': setDialog({ type: 'wordCount' }); break
+      case 'proofing': setProofOpen((o) => !o); break
       case 'shortcuts': setDialog({ type: 'shortcuts' }); break
       case 'lang:el': setLang('el'); break
       case 'lang:en': setLang('en'); break
     }
-  }, [editor, newFromTemplate, openFile, save, saveAs, exportPdf, print, pickImage])
+  }, [editor, newFromTemplate, openFile, save, saveAs, exportPdf, print, pickImage, setZoom])
 
   const runRef = useRef(run)
   runRef.current = run
@@ -506,6 +559,7 @@ export function App() {
     const ans = await platform.confirmUnsaved(fileRef.current.name)
     if (ans === 'cancel') return platform.cancelClose()
     if (ans === 'save' && !(await saveRef.current())) return platform.cancelClose()
+    dropRecovery(RECOVERY_KEY)
     platform.closeNow()
   }), [])
   const dirtyRef = useRef(dirty); dirtyRef.current = dirty
@@ -516,6 +570,10 @@ export function App() {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
       if (e.key === 'Escape') { setFind(null); setBackstage(null) }
+      // F7 = Spelling & Grammar, as in Word (Electron's menu owns it on desktop)
+      if (e.key === 'F7' && !isNative && !mod) { e.preventDefault(); runRef.current('proofing') }
+      // Word's Dictate shortcut (Alt+`), by key position so it also works on the Greek layout.
+      if (e.altKey && !mod && e.code === 'Backquote') { e.preventDefault(); runRef.current('dictate'); return }
       if (!mod) return
       const k = e.key.toLowerCase()
       const map: Record<string, string> = isNative
@@ -531,20 +589,35 @@ export function App() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('beforeunload', warn) }
   }, [])
 
-  // Crash-safety: periodic local recovery snapshot.
+  // Crash-safety: periodic local recovery snapshot while there are unsaved changes.
   useEffect(() => {
     if (!editor) return
     const id = setInterval(() => {
       if (!dirtyRef.current) return
       try {
-        localStorage.setItem('grafi:recovery', JSON.stringify({ at: Date.now(), name: fileRef.current.name, settings, content: editor.getJSON() }))
+        localStorage.setItem(RECOVERY_KEY, JSON.stringify({ at: Date.now(), name: fileRef.current.name, settings, content: editor.getJSON() }))
       } catch { /* quota / private mode */ }
-    }, 30000)
+    }, RECOVERY_EVERY)
     return () => clearInterval(id)
   }, [editor, settings])
+  useEffect(() => { if (!dirty) dropRecovery(RECOVERY_KEY) }, [dirty])
 
-  // Automation / testing handle (dev server, Electron self-test, on-device self-test).
-  ;(window as any).__grafi = { editor, settings, setSettings: setSettingsRaw, layoutStore }
+  // Offer the snapshot of a session that ended with unsaved changes (crash, killed tab…).
+  useEffect(() => {
+    if (!editor) return
+    const found = takeAbandonedRecovery()
+    if (!found) return
+    toast(t('app.recovered', { name: found.name }), 'warn', {
+      label: t('app.restore'),
+      run: () => {
+        loadInto({ doc: found.content, settings: found.settings, warnings: [] }, { path: null, name: found.name, kind: null })
+        setDirty(true)
+      },
+    }, 20000)
+  }, [editor, loadInto])
+
+  // Automation handle for the dev harness and the on-device self-test; not in release builds.
+  if (import.meta.env.DEV || import.meta.env.VITE_GRAFI_SELFTEST) (window as any).__grafi = { editor, settings, setSettings: setSettingsRaw, layoutStore }
 
   // Placeholder & other decorations are computed per transaction: refresh them in the new language.
   useEffect(() => {
@@ -557,7 +630,7 @@ export function App() {
 
   const api: AppApi = {
     editor, settings, setSettings, previewDesign: setPreview, file, dirty, view, setView, zoom, setZoom, showRuler, setShowRuler, showMarks, setShowMarks,
-    spellcheck, setSpellcheck, openDialog: setDialog, openFind: setFind, openBackstage: setBackstage, painter, startPainter, run,
+    spellcheck, setSpellcheck, proofOpen, setProofOpen, openDialog: setDialog, openFind: setFind, openBackstage: setBackstage, painter, startPainter, run,
     insertImageFiles, pickImage, newFromTemplate, openFile, openPath, save, saveAs, exportPdf, print, training, startTraining,
   }
 
@@ -567,7 +640,10 @@ export function App() {
       <div className="workspace">
         <Canvas api={api} />
         {find && <FindBar editor={editor} mode={find} setMode={setFind} onClose={() => { setFind(null); editor.commands.clearSearch(); editor.commands.focus() }} />}
+        {proofOpen && <ProofPanel api={api} onClose={() => { setProofOpen(false); editor.commands.focus() }} />}
+        <DictationBar editor={editor} />
       </div>
+      <ProofPopover api={api} panelOpen={proofOpen} openPanel={() => setProofOpen(true)} />
       <StatusBar api={api} />
       {backstage && <Backstage api={api} page={backstage} setPage={setBackstage} onClose={() => { setBackstage(null); editor.commands.focus() }} />}
       {training && <TrainingCoach key={`${training}-${trainingRun}`} api={api} lessonId={training} hidden={!!backstage} onClose={() => { setTraining(null); editor.commands.focus() }} />}

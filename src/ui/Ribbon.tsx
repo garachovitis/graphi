@@ -13,11 +13,11 @@ import { ThemesMenu, ColorsMenu, FontsMenu, StyleSetGallery, ThemeThumb } from '
 import { fontPairName, themeName, currentTheme, resolveColor } from '../model/themes'
 import { Btn, Group, Row, Col, Dropdown, MenuItem, MenuSep, MenuTitle, ColorGrid, Combo, NumField, Popover as PopoverList } from './controls'
 import type { AppApi } from './App'
-import { FONT_CHOICES, PARA_STYLES, fontStack, styleName, type ParaStyle } from '../model/styles'
+import { FONT_CHOICES, PARA_STYLES, fontHint, fontLabel, fontStack, styleName, type ParaStyle } from '../model/styles'
 import { FONT_SIZES, currentFontFamily, currentFontSizePt, currentStyle, growFont, setFontSizePt, changeCase } from '../editor/format'
 import { BULLET_FORMATS, NUMBER_FORMATS } from '../editor/lists'
 import { MARGIN_PRESETS, PAPER_SIZES, withOrientation, withPaper, cmLabel, mmToPx } from '../model/settings'
-import { modKey, isMac } from '../platform'
+import { modKey, isMac, isNative } from '../platform'
 import { MobileRibbon } from './MobileRibbon'
 import { CommandSearch, CMD_SELECTOR, type CmdEntry } from './CommandSearch'
 import { ShapeGallery, ShapeIcon, insertShape, changeKind } from './ShapeTools'
@@ -27,11 +27,14 @@ import { Ill } from './illustrations'
 import type { BreakKind } from '../editor/nodes'
 import { insertTrainingImage } from './Training'
 import { t, fmtNum, fmtDate, fmtLongDate, numText } from '../i18n'
+import { dictation, useDictation, useDictPrefs, engines as dictationEngines, currentEngine } from '../dictation'
+import { COMMAND_HELP } from '../dictation/text'
 
 type TabId = 'home' | 'insert' | 'design' | 'layout' | 'references' | 'review' | 'view' | 'table' | 'picture'
 
 const I = 18 // small illustrated icon
 const B = 30 // big illustrated icon
+const F = 22 // font group glyphs (B, I, U, A…)
 const ill = (n: string, s = I) => <Ill name={n} size={s} />
 const BREAK_MENU: [BreakKind, string][] = [
   ['page', 'pageBreak'], ['column', 'brkColumn'],
@@ -40,8 +43,10 @@ const BREAK_MENU: [BreakKind, string][] = [
 
 const narrowQuery = '(max-width: 820px)'
 function useNarrow() {
-  const [n, setN] = useState(() => window.matchMedia(narrowQuery).matches)
+  const [n, setN] = useState(() => !isNative && window.matchMedia(narrowQuery).matches)
   useEffect(() => {
+    // Desktop app: keep the full ribbon at any window width; it scrolls sideways instead.
+    if (isNative) return
     const m = window.matchMedia(narrowQuery)
     const h = () => setN(m.matches)
     m.addEventListener('change', h)
@@ -172,40 +177,44 @@ function HomeTab({ api }: { api: AppApi }) {
   return (
     <>
       <Group label={t('g.font')} onLauncher={() => api.openDialog({ type: 'font' })}>
-        <Col>
+        <Col className="font-col">
           <Row>
-            <Combo title={t('font.family')} width={118} value={family} options={[...new Set([currentTheme.fonts.major, currentTheme.fonts.minor, ...FONT_CHOICES])]} editable={false}
-              renderOption={(o) => <span className="font-opt" style={{ fontFamily: fontStack(o) }}>{o}{o === currentTheme.fonts.major && <small>{t('font.themeHeadings')}</small>}{o === currentTheme.fonts.minor && <small>{t('font.themeBody')}</small>}</span>}
+            <Combo title={t('font.family')} width={150} value={family} options={[...new Set([currentTheme.fonts.major, currentTheme.fonts.minor, ...FONT_CHOICES])]} editable={false} label={fontLabel}
+              renderOption={(o) => <span className="font-opt" style={{ fontFamily: fontStack(o) }} title={fontHint(o) || undefined}>{fontLabel(o)}{o === currentTheme.fonts.major && <small>{t('font.themeHeadings')}</small>}{o === currentTheme.fonts.minor && <small>{t('font.themeBody')}</small>}</span>}
               onCommit={(v) => c().setFontFamily(fontStack(v)).run()} />
             <Combo title={t('font.size')} width={54} value={numText(size)} options={FONT_SIZES.map((s) => numText(s))}
               onCommit={(v) => { const n = parseFloat(v.replace(',', '.')); if (n > 0) setFontSizePt(e, n) }} />
-            <Btn icon={ill('grow')} title={`${t('font.grow')} (${modKey}⇧>)`} onClick={() => growFont(e, 1)} />
-            <Btn icon={ill('shrink')} title={`${t('font.shrink')} (${modKey}⇧<)`} onClick={() => growFont(e, -1)} />
+            <Btn icon={ill('grow', F)} title={`${t('font.grow')} (${modKey}⇧>)`} onClick={() => growFont(e, 1)} />
+            <Btn icon={ill('shrink', F)} title={`${t('font.shrink')} (${modKey}⇧<)`} onClick={() => growFont(e, -1)} />
+            <Dropdown icon={ill('changeCase', F)} title={t('case.menu')}>
+              {(close) => (
+                <>
+                  <MenuItem label={t('case.sentence')} onClick={() => { changeCase(e, 'sentence'); close() }} />
+                  <MenuItem label={t('case.lower')} onClick={() => { changeCase(e, 'lower'); close() }} />
+                  <MenuItem label={t('case.upper')} onClick={() => { changeCase(e, 'upper'); close() }} />
+                  <MenuItem label={t('case.title')} onClick={() => { changeCase(e, 'title'); close() }} />
+                </>
+              )}
+            </Dropdown>
           </Row>
           <Row>
-            <Btn icon={ill('bold')} title={`${t('font.bold')} (${modKey}B)`} active={e.isActive('bold')} onClick={() => c().toggleBold().run()} />
-            <Btn icon={ill('italic')} title={`${t('font.italic')} (${modKey}I)`} active={e.isActive('italic')} onClick={() => c().toggleItalic().run()} />
-            <Btn icon={ill('underline')} title={`${t('font.underline')} (${modKey}U)`} active={e.isActive('underline')} onClick={() => c().toggleUnderline().run()} />
-            <Dropdown icon={<span className="color-ill">{ill('color')}<i style={{ background: resolveColor(fontColor) }} /></span>} title={t('font.color')} onClick={() => c().setColor(fontColor).run()}>
+            <Btn icon={ill('bold', F)} title={`${t('font.bold')} (${modKey}B)`} active={e.isActive('bold')} onClick={() => c().toggleBold().run()} />
+            <Btn icon={ill('italic', F)} title={`${t('font.italic')} (${modKey}I)`} active={e.isActive('italic')} onClick={() => c().toggleItalic().run()} />
+            <Btn icon={ill('underline', F)} title={`${t('font.underline')} (${modKey}U)`} active={e.isActive('underline')} onClick={() => c().toggleUnderline().run()} />
+            <Dropdown icon={<span className="color-ill lg">{ill('color', F)}<i style={{ background: resolveColor(fontColor) }} /></span>} title={t('font.color')} onClick={() => c().setColor(fontColor).run()}>
               {(close) => <ColorGrid linkTheme value={e.getAttributes('textStyle').color} onPick={(col) => { if (col) { setFontColor(col); c().setColor(col).run() } else c().unsetColor().run(); close() }} />}
             </Dropdown>
-            <Dropdown icon={ill('highlight')} title={t('font.highlight')} onClick={() => c().toggleHighlight({ color: hlColor }).run()}>
+            <Dropdown icon={ill('highlight', F)} title={t('font.highlight')} onClick={() => c().toggleHighlight({ color: hlColor }).run()}>
               {(close) => <ColorGrid highlight onPick={(col) => { if (col) { setHlColor(col); c().setHighlight({ color: col }).run() } else c().unsetHighlight().run(); close() }} />}
             </Dropdown>
-            <Dropdown icon={ill('more')} title={t('font.more')}>
+            <Btn icon={ill('painter', F)} title={t('font.painter')} active={!!api.painter} onClick={() => api.startPainter()} />
+            <Dropdown icon={ill('more', F)} title={t('font.more')}>
               {(close) => (
                 <>
                   <MenuItem label={t('font.strike')} active={e.isActive('strike')} onClick={() => { c().toggleStrike().run(); close() }} />
                   <MenuItem label={`${t('font.sub')}  x₂`} hint={`${modKey}=`} active={e.isActive('subscript')} onClick={() => { c().unsetSuperscript().toggleSubscript().run(); close() }} />
                   <MenuItem label={`${t('font.sup')}  x²`} hint={`${modKey}⇧+`} active={e.isActive('superscript')} onClick={() => { c().unsetSubscript().toggleSuperscript().run(); close() }} />
                   <MenuSep />
-                  <MenuTitle>{t('case.menu')}</MenuTitle>
-                  <MenuItem label={t('case.sentence')} onClick={() => { changeCase(e, 'sentence'); close() }} />
-                  <MenuItem label={t('case.lower')} onClick={() => { changeCase(e, 'lower'); close() }} />
-                  <MenuItem label={t('case.upper')} onClick={() => { changeCase(e, 'upper'); close() }} />
-                  <MenuItem label={t('case.title')} onClick={() => { changeCase(e, 'title'); close() }} />
-                  <MenuSep />
-                  <MenuItem icon={ill('painter', 16)} label={t('font.painter')} onClick={() => { api.startPainter(); close() }} />
                   <MenuItem icon={ill('clear', 16)} label={t('font.clear')} onClick={() => { c().unsetAllMarks().clearParagraphFormat().setParaStyle('Normal').run(); close() }} />
                   <MenuItem label={t('font.dialog')} hint={`${modKey}D`} onClick={() => { close(); api.openDialog({ type: 'font' }) }} />
                 </>
@@ -283,14 +292,54 @@ function HomeTab({ api }: { api: AppApi }) {
         <Btn big icon={ill('find', B)} label={t('edit.find')} title={`${t('edit.find')} (${modKey}F)`} onClick={() => api.openFind('find')} />
         <Btn big icon={ill('replace', B)} label={t('edit.replace')} title={`${t('edit.replace')} (${modKey}H)`} onClick={() => api.openFind('replace')} />
       </Group>
+
+      <VoiceGroup api={api} />
     </>
+  )
+}
+
+/** Home ▸ Voice ▸ Dictate: split button, the arrow holds language, punctuation, engine and the command list. */
+function VoiceGroup({ api }: { api: AppApi }) {
+  const d = useDictation()
+  const prefs = useDictPrefs()
+  const on = d.phase !== 'idle'
+  const engines = dictationEngines()
+  const current = currentEngine()
+  const set = (p: Partial<typeof prefs>, close: () => void) => { dictation.setPrefs(p); close() }
+  return (
+    <Group label={t('g.voice')}>
+      <Dropdown big icon={ill(on ? 'dictateOn' : 'dictate', B)} label={t('dict.dictate')} active={on} popClass="dict-pop"
+        title={`${on ? t('dict.stop') : t('dict.dictate')} (Alt+\`)`} onClick={() => api.run('dictate')}>
+        {(close) => (
+          <>
+            <MenuTitle>{t('dict.language')}</MenuTitle>
+            <MenuItem label={t('dict.langEl')} active={prefs.lang === 'el'} onClick={() => set({ lang: 'el' }, close)} />
+            <MenuItem label={t('dict.langEn')} active={prefs.lang === 'en'} onClick={() => set({ lang: 'en' }, close)} />
+            <MenuSep />
+            <MenuItem label={t('dict.autoPunct')} active={prefs.autoPunct} onClick={() => set({ autoPunct: !prefs.autoPunct }, close)} />
+            {engines.length > 1 && (
+              <>
+                <MenuSep />
+                <MenuTitle>{t('dict.engine')}</MenuTitle>
+                {engines.map((id) => <MenuItem key={id} label={t(`dict.engine.${id}`)} active={id === current} onClick={() => set({ engine: id }, close)} />)}
+              </>
+            )}
+            <MenuSep />
+            <MenuTitle>{t('dict.commands')} · {t('dict.say')}:</MenuTitle>
+            <div className="dict-help inline">
+              {COMMAND_HELP[prefs.lang].map(([say, mark]) => <div key={say} className="dict-help-row"><span>{say}</span><b>{mark}</b></div>)}
+            </div>
+          </>
+        )}
+      </Dropdown>
+    </Group>
   )
 }
 
 function stylePreview(s: ParaStyle): React.CSSProperties {
   return {
     fontFamily: fontStack(s.font || PARA_STYLES[0].font || 'Calibri'),
-    fontSize: Math.min(19, Math.max(11, s.sizePt * 0.95)),
+    fontSize: Math.min(24, Math.max(16, s.sizePt * 1.2)),
     color: s.color || '#000',
     fontWeight: s.bold ? 700 : 400,
     fontStyle: s.italic ? 'italic' : 'normal',
@@ -617,7 +666,7 @@ function ReferencesTab({ api }: { api: AppApi }) {
 function ReviewTab({ api }: { api: AppApi }) {
   return (
     <Group label={t('g.proofing')}>
-      <Btn big icon={ill('spelling', B)} label={t('rev.spelling')} title={t('rev.spellingTitle')} active={api.spellcheck} onClick={() => api.setSpellcheck(!api.spellcheck)} />
+      <Btn big icon={ill('spelling', B)} label={t('rev.proof')} title={t('rev.proofTitle')} active={api.proofOpen} onClick={() => api.setProofOpen(!api.proofOpen)} />
       <Btn big icon={ill('wordCount', B)} label={t('rev.wordCount')} title={t('rev.wordCount')} onClick={() => api.openDialog({ type: 'wordCount' })} />
     </Group>
   )

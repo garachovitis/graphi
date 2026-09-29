@@ -18,6 +18,8 @@ export interface Loaded {
   /** Either a ProseMirror JSON document or HTML to be parsed by the editor. */
   doc?: JSONContent
   html?: string
+  /** The HTML carries meaningful spaces (ODF text:s, trailing spaces) that must not be collapsed. */
+  preserveWhitespace?: boolean
   settings: DocSettings
   warnings: string[]
 }
@@ -33,7 +35,7 @@ export async function loadFile(name: string, data: Uint8Array): Promise<Loaded> 
     }
     case 'odt': {
       const r = await importOdt(data)
-      return { html: r.html, settings: r.settings, warnings: r.warnings }
+      return { html: r.html, preserveWhitespace: true, settings: r.settings, warnings: r.warnings }
     }
     case 'grafi': {
       const j = JSON.parse(decode(data))

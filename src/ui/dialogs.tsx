@@ -5,7 +5,7 @@ import type { AppApi } from './App'
 import {
   PAPER_SIZES, MARGIN_PRESETS, withOrientation, withPaper, type DocSettings, type HFAlign, mmToPx,
 } from '../model/settings'
-import { FONT_CHOICES, fontStack } from '../model/styles'
+import { FONT_CHOICES, fontHint, fontLabel, fontStack } from '../model/styles'
 import { currentFontFamily, currentFontSizePt, currentStyle, FONT_SIZES } from '../editor/format'
 import { layoutStore } from '../editor/layoutStore'
 import { countWords } from './StatusBar'
@@ -277,7 +277,7 @@ function FontDlg({ api, close }: { api: AppApi; close: () => void }) {
       <div className="dlg-grid">
         <Field label={t('dlg.font')}>
           <select value={family} onChange={(ev) => setFamily(ev.target.value)}>
-            {fonts.map((f) => <option key={f} value={f} style={{ fontFamily: fontStack(f) }}>{f}</option>)}
+            {fonts.map((f) => <option key={f} value={f} style={{ fontFamily: fontStack(f) }}>{fontHint(f) ? `${fontLabel(f)} (${fontHint(f)})` : f}</option>)}
           </select>
         </Field>
         <Field label={t('dlg.size')}>

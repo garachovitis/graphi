@@ -30,6 +30,33 @@ export const DEFAULT_SIZE_PT = 11
 /** Fonts offered in the font picker. */
 export const FONT_CHOICES = ['Calibri', 'Arial', 'Tahoma']
 
+// The bundled font a name renders with when the original isn't installed. The UI names what the
+// user actually sees (the original is a third-party trademark); the file keeps the original name.
+const SUBSTITUTES: Record<string, string> = { Calibri: 'Carlito', 'Calibri Light': 'Carlito', Arial: 'Arimo' }
+const installed = new Map<string, boolean>()
+function isInstalled(name: string): boolean {
+  let hit = installed.get(name)
+  if (hit === undefined) {
+    // Metric-compatible substitutes measure the same, so compare against a monospace fallback.
+    const c = document.createElement('canvas').getContext('2d')
+    const w = (f: string) => { c!.font = `72px ${f}`; return c!.measureText('mmmmmmlliWW@').width }
+    hit = !c || w(`"${name}", monospace`) !== w('monospace')
+    installed.set(name, hit)
+  }
+  return hit
+}
+
+/** Name shown in font pickers: the bundled substitute when the original font is missing. */
+export function fontLabel(name: string): string {
+  const sub = SUBSTITUTES[name]
+  return sub && !isInstalled(name) ? sub : name
+}
+
+/** «compatible with Calibri» when fontLabel() shows a substitute, else ''. */
+export function fontHint(name: string): string {
+  return fontLabel(name) !== name ? t('font.compat', { name }) : ''
+}
+
 /**
  * Word expresses line spacing as a multiple of the font's natural line height
  * ("single" ≈ 1.2 × font size for Calibri/Carlito, Cambria, Arial…). CSS line-height

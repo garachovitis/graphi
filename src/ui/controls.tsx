@@ -45,7 +45,7 @@ export function Group(p: { label: string; children: ReactNode; onLauncher?: () =
 }
 
 export const Row = (p: { children: ReactNode }) => <div className="rb-row">{p.children}</div>
-export const Col = (p: { children: ReactNode }) => <div className="rb-col">{p.children}</div>
+export const Col = (p: { children: ReactNode; className?: string }) => <div className={`rb-col${p.className ? ` ${p.className}` : ''}`}>{p.children}</div>
 export const Sep = () => <div className="rb-sep" />
 
 /** Popover anchored to a trigger; closes on outside click / Escape. */
@@ -349,11 +349,13 @@ export function ColorWell(p: { value: string | null; onChange: (c: string | null
 }
 
 /** Editable combo (font size): type a value and press Enter, or pick from the list. */
-export function Combo(p: { value: string; options: string[]; onCommit: (v: string) => void; width: number; title: string; renderOption?: (o: string) => ReactNode; editable?: boolean }) {
-  const [text, setText] = useState(p.value)
+export function Combo(p: { value: string; options: string[]; onCommit: (v: string) => void; width: number; title: string; renderOption?: (o: string) => ReactNode; editable?: boolean; label?: (v: string) => string }) {
+  // label: display name for a read-only combo (editable ones commit what is typed)
+  const shown = p.label ? p.label(p.value) : p.value
+  const [text, setText] = useState(shown)
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  useEffect(() => setText(p.value), [p.value])
+  useEffect(() => setText(shown), [shown])
   return (
     <div ref={ref} className="combo" style={{ width: p.width }} title={p.title}>
       <input
@@ -364,11 +366,11 @@ export function Combo(p: { value: string; options: string[]; onCommit: (v: strin
         onFocus={(e) => e.target.select()}
         onKeyDown={(e) => {
           if (e.key === 'Enter') { p.onCommit(text); setOpen(false) }
-          if (e.key === 'Escape') { setText(p.value); setOpen(false) }
+          if (e.key === 'Escape') { setText(shown); setOpen(false) }
           if (e.key === 'ArrowDown') setOpen(true)
         }}
         onMouseDown={() => { if (p.editable === false) setOpen((o) => !o) }}
-        onBlur={() => setText(p.value)}
+        onBlur={() => setText(shown)}
       />
       <button type="button" className="combo-arrow" tabIndex={-1} onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen((o) => !o)}>
         <ChevronDown size={11} />

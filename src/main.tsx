@@ -13,18 +13,20 @@ import { App } from './ui/App'
 import { initTheme } from './ui/theme'
 import { initLang } from './i18n'
 
+// Desktop app (Electron): narrow windows keep the full desktop layout (see app.css).
+if ((window as any).grafiNative) document.documentElement.classList.add('desktop-host')
+
 initTheme()
 initLang()
 
-if ((import.meta as any).env?.DEV) import('./devtest')
+if (import.meta.env.DEV) import('./devtest')
 
 createRoot(document.getElementById('root')!).render(<App />)
 
 // Installable, offline-capable web app (not inside Electron or the native mobile shells).
 const nativeShell = !!(window as any).grafiNative || !!(window as any).Capacitor?.isNativePlatform?.()
-if (!nativeShell && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && !(import.meta as any).env?.DEV) {
+if (!nativeShell && 'serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost') && !import.meta.env.DEV) {
   window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}))
 }
 
-
-import('./mobiletest').then((m) => m.maybeRunSelftest()).catch(() => {})
+if (import.meta.env.VITE_GRAFI_SELFTEST) import('./mobiletest').then((m) => m.maybeRunSelftest()).catch(() => {})

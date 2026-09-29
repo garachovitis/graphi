@@ -19,7 +19,7 @@ import {
   fontPairName, onThemesChange, restoreCustomTheme, sameColors, sameFonts, sameTheme,
   saveCustomTheme, setUserDefaultDesign, themeName, type DocTheme, type Slot, type ThemeColors, type ThemeFonts,
 } from '../model/themes'
-import { STYLE_SETS, fontStack, resolveSet, styleName } from '../model/styles'
+import { STYLE_SETS, fontHint, fontLabel, fontStack, resolveSet, styleName } from '../model/styles'
 import { t, type Key } from '../i18n'
 
 // ───────────── shared bits ─────────────
@@ -155,8 +155,8 @@ export function FontsMenu({ api, close }: { api: AppApi; close: () => void }) {
         onClick={() => { pv.stop(); applyTheme(api, th, 'fonts'); close() }}>
         <span className="fr-aa" style={{ fontFamily: fontStack(fonts.major) }}>Aa</span>
         <span className="fr-names">
-          <b style={{ fontFamily: fontStack(fonts.major) }}>{fonts.major}</b>
-          <span style={{ fontFamily: fontStack(fonts.minor) }}>{fonts.minor}</span>
+          <b style={{ fontFamily: fontStack(fonts.major) }} title={fontHint(fonts.major) || undefined}>{fontLabel(fonts.major)}</b>
+          <span style={{ fontFamily: fontStack(fonts.minor) }} title={fontHint(fonts.minor) || undefined}>{fontLabel(fonts.minor)}</span>
         </span>
         {on && <Check size={13} />}
       </button>

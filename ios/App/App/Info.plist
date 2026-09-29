@@ -26,6 +26,10 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Το Grafi χρησιμοποιεί το μικρόφωνο για την Υπαγόρευση.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Το Grafi μετατρέπει την ομιλία σας σε κείμενο για την Υπαγόρευση.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

@@ -1,5 +1,5 @@
-// On-device self-test (iOS/Android). Runs only if the file "grafi-selftest" exists in the
-// app's Documents folder (placed there by the developer, e.g. via simctl). It renders a
+// On-device self-test (iOS/Android). Compiled in only with VITE_GRAFI_SELFTEST=1, and runs only
+// if the file "grafi-selftest" exists in the app's Documents folder (e.g. placed via simctl). It renders a
 // multi-page document through the native PDF path and writes the PDF + a JSON report.
 import { Capacitor } from '@capacitor/core'
 

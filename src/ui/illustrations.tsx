@@ -37,19 +37,22 @@ const Badge = ({ cx, cy, r = 5, fill = C.primary, children }: { cx: number; cy: 
     {typeof children === 'string' ? <text x={cx} y={cy + 2.6} textAnchor="middle" fontSize={r * 1.3} fontWeight={800} fill="#fff" fontFamily="Arial, sans-serif">{children}</text> : children}</g>
 )
 const Plus = ({ cx, cy }: { cx: number; cy: number }) => <Badge cx={cx} cy={cy} r={5}><path d={`M${cx - 2.6} ${cy}h5.2M${cx} ${cy - 2.6}v5.2`} stroke="#fff" strokeWidth={1.8} strokeLinecap="round" /></Badge>
-const Glyph = ({ t, color = C.ink, size = 18, y = 22, italic, underline, weight = 800 }: { t: string; color?: string; size?: number; y?: number; italic?: boolean; underline?: boolean; weight?: number }) => (
-  <text x={16} y={y} textAnchor="middle" fontSize={size} fontWeight={weight} fontStyle={italic ? 'italic' : 'normal'} textDecoration={underline ? 'underline' : 'none'} fill={color} fontFamily="Georgia, 'Times New Roman', serif">{t}</text>
+const SERIF = "Georgia, 'Times New Roman', serif"
+const SANS = "-apple-system, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+const Glyph = ({ t, color = C.ink, size = 18, y = 22, italic, underline, weight = 800, sans }: { t: string; color?: string; size?: number; y?: number; italic?: boolean; underline?: boolean; weight?: number; sans?: boolean }) => (
+  <text x={16} y={y} textAnchor="middle" fontSize={size} fontWeight={weight} fontStyle={italic ? 'italic' : 'normal'} textDecoration={underline ? 'underline' : 'none'} fill={color} fontFamily={sans ? SANS : SERIF}>{t}</text>
 )
 
 const ICONS: Record<string, () => ReactElement> = {
   // ── Home ──
-  bold: () => <Glyph t="B" />,
-  italic: () => <Glyph t="I" italic weight={700} />,
-  underline: () => <><Glyph t="U" weight={700} y={20} /><rect x={9} y={24} width={14} height={2.4} rx={1.2} fill={C.primary} /></>,
-  color: () => <><Glyph t="A" y={20} weight={700} /><rect x={7} y={23} width={18} height={4} rx={1.5} fill={C.red} /></>,
+  bold: () => <Glyph t="B" sans size={19} y={23} weight={700} />,
+  italic: () => <Glyph t="I" sans italic size={19} y={23} weight={500} />,
+  underline: () => <><Glyph t="U" sans size={17} y={20} weight={500} /><rect x={10} y={24} width={12} height={1.8} rx={0.9} fill={C.primary} /></>,
+  color: () => <><Glyph t="A" sans size={17} y={20} weight={500} /><rect x={8} y={23.5} width={16} height={3.2} rx={1.6} fill={C.red} /></>,
+  changeCase: () => <Glyph t="Aa" sans size={16} y={22} weight={500} />,
   highlight: () => <><rect x={5} y={21} width={22} height={6} rx={2} fill={C.yellow} /><path d="M11 18l9-11 4 3-9 11z" fill={C.orange} /><path d="M11 18l4 3-5 1z" fill={C.ink} /></>,
-  grow: () => <><Glyph t="A" size={17} y={24} weight={700} /><path d="M23 11l3-4 3 4" stroke={C.primary} strokeWidth={2} fill="none" strokeLinecap="round" /></>,
-  shrink: () => <><Glyph t="A" size={13} y={24} weight={700} /><path d="M23 7l3 4 3-4" stroke={C.primary} strokeWidth={2} fill="none" strokeLinecap="round" /></>,
+  grow: () => <><Glyph t="A" size={20} y={26} weight={700} /><path d="M23 11l3-4 3 4" stroke={C.primary} strokeWidth={2} fill="none" strokeLinecap="round" /></>,
+  shrink: () => <><Glyph t="A" size={15} y={25} weight={700} /><path d="M23 7l3 4 3-4" stroke={C.primary} strokeWidth={2} fill="none" strokeLinecap="round" /></>,
   styles: () => <><rect x={3} y={6} width={26} height={20} rx={3} fill={C.light} /><text x={16} y={21} textAnchor="middle" fontSize={13} fontWeight={700} fill={C.dark} fontFamily="Arial">Aa</text></>,
   bullets: () => <>{[8, 16, 24].map((y) => <g key={y}><circle cx={7} cy={y} r={2.4} fill={C.primary} /><rect x={12} y={y - 1} width={15} height={2} rx={1} fill={C.line} /></g>)}</>,
   numbering: () => <>{[['1', 9], ['2', 17], ['3', 25]].map(([n, y]) => <g key={n}><text x={6} y={(y as number) + 2} fontSize={7.5} fontWeight={800} fill={C.primary} fontFamily="Arial">{n}</text><rect x={12} y={(y as number) - 1.5} width={15} height={2} rx={1} fill={C.line} /></g>)}</>,
@@ -66,6 +69,8 @@ const ICONS: Record<string, () => ReactElement> = {
   more: () => <>{[8, 16, 24].map((x) => <circle key={x} cx={x} cy={16} r={2.8} fill={C.primary} />)}</>,
   find: () => <><Page x={4} y={4} w={17} h={22} /><Lines x={7} y={9} w={11} n={4} /><circle cx={21} cy={20} r={6} fill={C.light} stroke={C.primary} strokeWidth={2.2} /><path d="M25.5 24.5l4 4" stroke={C.primary} strokeWidth={2.8} strokeLinecap="round" /></>,
   replace: () => <><rect x={3} y={4} width={12} height={11} rx={2} fill={C.light} /><text x={9} y={13} textAnchor="middle" fontSize={9} fontWeight={800} fill={C.dark} fontFamily="Arial">A</text><rect x={17} y={17} width={12} height={11} rx={2} fill={C.primary} /><text x={23} y={26} textAnchor="middle" fontSize={9} fontWeight={800} fill="#fff" fontFamily="Arial">B</text><path d="M16 9h7v6M16 23H9v-6" stroke={C.orange} strokeWidth={1.8} fill="none" strokeLinecap="round" /></>,
+  dictate: () => <><rect x={11} y={2.5} width={10} height={17} rx={5} fill={C.primary} /><path d="M13.5 7h5M13.5 10.5h5M13.5 14h5" stroke="#fff" strokeWidth={1.3} strokeLinecap="round" opacity={0.7} /><path d="M7 14a9 9 0 0 0 18 0" stroke={C.ink} strokeWidth={2} fill="none" strokeLinecap="round" /><path d="M16 23v5M11.5 29h9" stroke={C.ink} strokeWidth={2} strokeLinecap="round" /><path d="M26.5 6.5c1.6 1.6 1.6 5.4 0 7M29 4c3 3 3 9.5 0 12.5" stroke={C.orange} strokeWidth={1.6} fill="none" strokeLinecap="round" /></>,
+  dictateOn: () => <><rect x={11} y={2.5} width={10} height={17} rx={5} fill={C.red} /><path d="M13.5 7h5M13.5 10.5h5M13.5 14h5" stroke="#fff" strokeWidth={1.3} strokeLinecap="round" opacity={0.7} /><path d="M7 14a9 9 0 0 0 18 0" stroke={C.ink} strokeWidth={2} fill="none" strokeLinecap="round" /><path d="M16 23v5M11.5 29h9" stroke={C.ink} strokeWidth={2} strokeLinecap="round" /><path d="M26.5 6.5c1.6 1.6 1.6 5.4 0 7M29 4c3 3 3 9.5 0 12.5" stroke={C.red} strokeWidth={1.6} fill="none" strokeLinecap="round" /></>,
   // ── Insert ──
   table: () => <Grid />,
   image: () => <Photo />,

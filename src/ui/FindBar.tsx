@@ -40,7 +40,7 @@ export function FindBar({ editor, mode, setMode, onClose }: { editor: Editor; mo
         <div className="fb-row">
           <input className="fb-input" placeholder={t('find.replaceWith')} value={repl} aria-label={t('find.replaceWith')}
             onChange={(e) => setRepl(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); editor.commands.replaceCurrent(repl); editor.commands.findNext() } }} />
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); editor.commands.replaceCurrent(repl) } }} />
           <button className="fb-text" disabled={!total} onClick={() => { editor.commands.replaceCurrent(repl) }}>{t('find.replace')}</button>
           <button className="fb-text" disabled={!total} onClick={() => { const n = total; editor.commands.replaceAll(repl); setTimeout(() => alertCount(n), 0) }}>{t('find.replaceAll')}</button>
         </div>

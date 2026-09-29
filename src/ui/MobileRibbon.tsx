@@ -1,7 +1,8 @@
 // Phone toolbar: the essentials of every tab, all visible at once (no hidden scrolling).
 // Cut / copy / paste are left to the OS long-press menu.
-import { useRef, useState, type ReactNode } from 'react'
-import { Undo2, Redo2, Save, Menu } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Undo2, Redo2, Save, Menu, SpellCheck } from 'lucide-react'
+import { getProof } from '../editor/Proofing'
 import type { Editor } from '@tiptap/core'
 import type { AppApi } from './App'
 import { Popover, ColorGrid, MenuItem, MenuSep, MenuTitle } from './controls'
@@ -15,6 +16,7 @@ import { Ill } from './illustrations'
 import { ShapeGallery, insertShape, changeKind } from './ShapeTools'
 import { isLine, shapeSrc, type VShape } from '../editor/shapes'
 import { t, numText } from '../i18n'
+import { useDictation } from '../dictation'
 
 type MTab = 'home' | 'insert' | 'layout' | 'refs' | 'view' | 'table' | 'picture'
 const S = 26
@@ -52,16 +54,47 @@ export function MobileRibbon({ api }: { api: AppApi }) {
   if (onImage) tabs.push(['picture', e.getAttributes('image').vshape ? t('m.shapes') : t('m.picture')])
   tabs.push(['layout', t('tab.layout')], ['refs', t('tab.references')], ['view', t('tab.view')])
 
+  // The tab row scrolls sideways on narrow phones: keep the active (or newly shown contextual)
+  // tab in view, and fade the edge that has more tabs behind it.
+  const tabsRef = useRef<HTMLElement>(null)
+  const [more, setMore] = useState({ left: false, right: false })
+  const edges = () => {
+    const el = tabsRef.current
+    if (!el) return
+    const next = { left: el.scrollLeft > 2, right: el.scrollLeft + el.clientWidth < el.scrollWidth - 2 }
+    setMore((m) => (m.left === next.left && m.right === next.right ? m : next))
+  }
+  const ctxTab = inTable ? 'table' : onImage ? 'picture' : null
+  const reveal = (sel: string) => {
+    const el = tabsRef.current
+    const tab = el?.querySelector<HTMLElement>(sel)
+    if (!el || !tab) return
+    const pad = 36 // clear of the fade
+    const left = tab.offsetLeft - el.offsetLeft
+    if (left < el.scrollLeft + pad) el.scrollTo({ left: Math.max(0, left - pad), behavior: 'smooth' })
+    else if (left + tab.offsetWidth > el.scrollLeft + el.clientWidth - pad) el.scrollTo({ left: left + tab.offsetWidth - el.clientWidth + pad, behavior: 'smooth' })
+    edges()
+  }
+  useEffect(() => reveal('.m-tab.active'), [shown])
+  useEffect(() => { if (ctxTab) reveal('.m-tab.ctx') }, [ctxTab])
+  useEffect(() => {
+    window.addEventListener('resize', edges)
+    return () => window.removeEventListener('resize', edges)
+  }, [])
+
   return (
     <header className="app-chrome ribbon-wrap m-ribbon">
       <div className="qat">
         <button className="m-file" aria-label={t('qat.file')} onClick={() => api.openBackstage('home')}><Menu size={17} /> {t('qat.file')}</button>
         <button className="m-icon" aria-label={t('qat.save')} onClick={() => api.save()}><Save size={19} /></button>
         <div className="qat-title">{api.file.name}</div>
+        <button className={`m-icon${api.proofOpen ? ' active' : ''}`} aria-label={t('pf.sbTitle')} onClick={() => api.setProofOpen(!api.proofOpen)}>
+          <SpellCheck size={19} />{getProof(e.state).issues.length > 0 && <span className="m-badge">{getProof(e.state).issues.length}</span>}
+        </button>
         <button className="m-icon" aria-label={t('qat.undo')} disabled={!e.can().undo()} onClick={() => e.chain().focus().undo().run()}><Undo2 size={19} /></button>
         <button className="m-icon" aria-label={t('qat.redo')} disabled={!e.can().redo()} onClick={() => e.chain().focus().redo().run()}><Redo2 size={19} /></button>
       </div>
-      <nav className="m-tabs" role="tablist">
+      <nav ref={tabsRef} className={`m-tabs${more.left ? ' more-left' : ''}${more.right ? ' more-right' : ''}`} role="tablist" onScroll={edges}>
         {tabs.map(([id, label]) => (
           <button key={id} role="tab" aria-selected={shown === id} className={`m-tab${shown === id ? ' active' : ''}${id === 'table' || id === 'picture' ? ' ctx' : ''}`} onClick={() => setTab(id)}>{label}</button>
         ))}
@@ -84,6 +117,7 @@ function Home({ api }: { api: AppApi }) {
   const c = () => e.chain().focus()
   const st = currentStyle(e)
   const align = ['left', 'center', 'right', 'justify'].find((a) => e.isActive({ textAlign: a })) || 'left'
+  const dict = useDictation()
   return (
     <>
       <MDrop icon={<Ill name="styles" size={S} />} label={styleName(st)}>
@@ -97,6 +131,7 @@ function Home({ api }: { api: AppApi }) {
           </>
         )}
       </MDrop>
+      <MBtn icon={<Ill name={dict.phase !== 'idle' ? 'dictateOn' : 'dictate'} size={S} />} label={t('dict.dictate')} active={dict.phase !== 'idle'} onClick={() => api.run('dictate')} />
       <MBtn icon={<Ill name="bold" size={S} />} label={t('m.bold')} active={e.isActive('bold')} onClick={() => c().toggleBold().run()} />
       <MBtn icon={<Ill name="italic" size={S} />} label={t('m.italic')} active={e.isActive('italic')} onClick={() => c().toggleItalic().run()} />
       <MBtn icon={<Ill name="underline" size={S} />} label={t('m.underline')} active={e.isActive('underline')} onClick={() => c().toggleUnderline().run()} />
@@ -219,7 +254,9 @@ function Refs({ api }: { api: AppApi }) {
 function View({ api }: { api: AppApi }) {
   const fitWidth = () => {
     const el = document.querySelector('.canvas-scroll') as HTMLElement | null
-    if (el) api.setZoom((el.clientWidth - 12) / mmToPx(api.settings.width))
+    // In the mobile view the text already fills the width: "fit" means back to 100 %.
+    if (api.view === 'web') api.setZoom(1)
+    else if (el) api.setZoom((el.clientWidth - 12) / mmToPx(api.settings.width))
   }
   return (
     <>

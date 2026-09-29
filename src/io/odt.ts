@@ -241,7 +241,10 @@ function tableXml(n: JSONContent, ctx: Ctx): string {
   const fill = unknown ? Math.max(20, (totalPx - known) / unknown) : 0
   const colMm = widths.map((w) => (((w || fill) * 25.4) / 96).toFixed(2))
   const tableW = colMm.reduce((s, w) => s + parseFloat(w), 0).toFixed(2)
-  ctx.auto.raw(`<style:style style:name="${name}" style:family="table"><style:table-properties style:width="${tableW}mm" table:align="margins" fo:margin-bottom="8pt"/></style:style>`)
+  // A page break right before the table belongs to the table, not to its first cell.
+  const breakBefore = ctx.pendingBreak ? ' fo:break-before="page"' : ''
+  ctx.pendingBreak = false
+  ctx.auto.raw(`<style:style style:name="${name}" style:family="table"><style:table-properties style:width="${tableW}mm" table:align="margins" fo:margin-bottom="8pt"${breakBefore}/></style:style>`)
   colMm.forEach((w, i) => ctx.auto.raw(`<style:style style:name="${name}.C${i + 1}" style:family="table-column"><style:table-column-properties style:column-width="${w}mm"/></style:style>`))
   const covered = new Set<string>() // "row:col" occupied by row spans
   const rowXml = rows.map((r, ri) => {
@@ -311,7 +314,9 @@ export async function exportOdt(doc: JSONContent, settings: DocSettings, heading
     ctx.pics.set(key, { path: `Pictures/image${++i}.${p.type}`, bytes: p.bytes, mime: p.mime, w: p.w, h: p.h })
   }
 
-  const body = (doc.content || []).map((b) => blockXml(b, ctx)).join('') || '<text:p/>'
+  let body = (doc.content || []).map((b) => blockXml(b, ctx)).join('')
+  // A trailing page break needs a paragraph to carry it.
+  if (ctx.pendingBreak || !body) body += `<text:p text:style-name="${paraStyle({ type: 'paragraph' }, ctx, 'Standard')}"/>`
   const fonts = [...ctx.auto.fonts].map((f) => `<style:font-face style:name="${escapeXml(f)}" svg:font-family="'${escapeXml(f)}'"/>`).join('')
 
   const content = `<?xml version="1.0" encoding="UTF-8"?>
@@ -374,7 +379,7 @@ ${[...ctx.pics.values()].map((p) => `<manifest:file-entry manifest:full-path="${
 }
 
 // ───────────────────────── import ─────────────────────────
-interface OStyle { name: string; family: string; parent: string | null; display: string; p: Record<string, string>; t: Record<string, string>; cell: Record<string, string> }
+interface OStyle { name: string; family: string; parent: string | null; display: string; p: Record<string, string>; t: Record<string, string>; cell: Record<string, string>; table: Record<string, string> }
 
 function readStyles(root: Element | null, into: Map<string, OStyle>) {
   if (!root) return
@@ -389,7 +394,7 @@ function readStyles(root: Element | null, into: Map<string, OStyle>) {
     into.set(name, {
       name, family: s.getAttribute('style:family') || '', parent: s.getAttribute('style:parent-style-name'),
       display: (s.getAttribute('style:display-name') || name).toLowerCase(),
-      p: props('style:paragraph-properties'), t: props('style:text-properties'), cell: props('style:table-cell-properties'),
+      p: props('style:paragraph-properties'), t: props('style:text-properties'), cell: props('style:table-cell-properties'), table: props('style:table-properties'),
     })
   }
 }
@@ -580,6 +585,7 @@ export async function importOdt(data: Uint8Array): Promise<{ html: string; setti
           break
         }
         case 'table:table': {
+          if (styles.get(n.getAttribute('table:style-name') || '')?.table['fo:break-before'] === 'page') out += '<div data-page-break=""></div>'
           let rows = ''
           const rowEls = Array.from(n.getElementsByTagName('table:table-row'))
           for (const r of rowEls) {

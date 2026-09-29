@@ -15,6 +15,8 @@ import { ParagraphFormat } from './ParagraphFormat'
 import { PageBreak, TableOfContents, WTableCell, WTableHeader } from './nodes'
 import { Picture } from './image'
 import { SearchReplace } from './SearchReplace'
+import { Dictation } from './Dictation'
+import { Proofing } from './Proofing'
 import { Pagination } from './Pagination'
 import { WordShortcuts } from './format'
 import { OrderedListStyle } from './lists'
@@ -64,6 +66,8 @@ export function editorExtensions(): AnyExtension[] {
     Placeholder.configure({ placeholder: () => t('editor.placeholder'), showOnlyWhenEditable: true, showOnlyCurrent: true }),
     Typography.configure({ oneHalf: false, oneQuarter: false, threeQuarters: false, plusMinus: false, notEqual: false, laquo: false, raquo: false }),
     SearchReplace,
+    Dictation,
+    Proofing,
     WordShortcuts,
     Pagination,
   ]

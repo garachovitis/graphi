@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { Node as PMNode } from '@tiptap/pm/model'
-import { FileText, Monitor, Minus, Plus } from 'lucide-react'
+import { FileText, Monitor, Minus, Plus, SpellCheck, Check } from 'lucide-react'
 import { layoutStore } from '../editor/layoutStore'
 import type { AppApi } from './App'
 import { currentPage } from './Canvas'
+import { getProof } from '../editor/Proofing'
 import { t, tn, fmtInt } from '../i18n'
 
 export function countWords(text: string) {
@@ -52,11 +53,12 @@ export function StatusBar({ api }: { api: AppApi }) {
           {selWords ? t('sb.wordsOf', { sel: fmtInt(selWords), n: words }) : tn('sb.words', words)}
         </button>
         <span className="sb-item muted">{tn('sb.chars', chars)}</span>
-        <button className="sb-item" title={t('sb.langTitle')} onClick={() => api.openBackstage('appearance')}>{t('sb.lang')}</button>
+        <ProofStatus api={api} />
+        <button className="sb-item sb-lang" title={t('sb.langTitle')} onClick={() => api.openBackstage('appearance')}>{t('sb.lang')}</button>
       </div>
       <div className="sb-right">
-        <button className={`sb-icon${api.view === 'print' ? ' active' : ''}`} title={t('view.print')} onClick={() => api.setView('print')}><FileText size={14} /></button>
-        <button className={`sb-icon${api.view === 'web' ? ' active' : ''}`} title={t('view.web')} onClick={() => api.setView('web')}><Monitor size={14} /></button>
+        <button className={`sb-icon sb-view${api.view === 'print' ? ' active' : ''}`} title={t('view.print')} onClick={() => api.setView('print')}><FileText size={14} /></button>
+        <button className={`sb-icon sb-view${api.view === 'web' ? ' active' : ''}`} title={t('view.web')} onClick={() => api.setView('web')}><Monitor size={14} /></button>
         <button className="sb-icon" title={t('sb.zoomOut')} onClick={() => api.run('zoomOut')}><Minus size={13} /></button>
         <input className="zoom-slider" type="range" min={-230} max={161} value={slider} aria-label={t('g.zoom')}
           onChange={(e) => api.setZoom(Math.exp(Number(e.target.value) / 100))} />
@@ -64,5 +66,19 @@ export function StatusBar({ api }: { api: AppApi }) {
         <button className="sb-item zoom-pct" title={t('view.zoom100')} onClick={() => api.setZoom(1)}>{pct}%</button>
       </div>
     </footer>
+  )
+}
+
+/** Word's proofing indicator: issue count, opens the panel. */
+function ProofStatus({ api }: { api: AppApi }) {
+  const st = getProof(api.editor.state)
+  if (!api.spellcheck && !api.proofOpen) return null
+  const n = st.issues.length
+  return (
+    <button className={`sb-item sb-proof${api.proofOpen ? ' active' : ''}`} title={t('pf.sbTitle')} aria-label={`${t('pf.sbTitle')} — ${tn('pf.count', n)}`}
+      onClick={() => api.setProofOpen(!api.proofOpen)}>
+      <SpellCheck size={14} />
+      {st.status === 'ready' && (n ? <span className="sb-badge">{fmtInt(n)}</span> : <Check size={13} />)}
+    </button>
   )
 }

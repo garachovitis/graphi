@@ -20,10 +20,23 @@ const DEFAULTS: Omit<ImgAttrs, 'src'> = {
 
 export const pictureAttrs = (n: JSONContent): ImgAttrs => ({ ...DEFAULTS, ...(n.attrs || {}) } as ImgAttrs)
 
+/** FNV-1a over the whole source, memoised: pictures are often megabytes of base64. */
+const hashes = new Map<string, string>()
+function srcHash(src: string) {
+  let h = hashes.get(src)
+  if (h) return h
+  let x = 0x811c9dc5
+  for (let i = 0; i < src.length; i++) x = Math.imul(x ^ src.charCodeAt(i), 0x01000193)
+  h = `${src.length}:${(x >>> 0).toString(36)}`
+  if (hashes.size > 200) hashes.clear()
+  hashes.set(src, h)
+  return h
+}
+
 export const pictureKey = (a: ImgAttrs) =>
   a.vshape
     ? JSON.stringify(['shape', a.vshape, a.width, a.height])
-    : JSON.stringify([a.src.length, a.src.slice(-64), a.width, a.height, a.shape, a.aspect, a.focusX, a.focusY, a.shadow, a.radius])
+    : JSON.stringify([srcHash(a.src), a.width, a.height, a.shape, a.aspect, a.focusX, a.focusY, a.shadow, a.radius])
 
 export async function preparePictures(doc: JSONContent, maxWidthPx: number): Promise<Map<string, PreparedPicture>> {
   const out = new Map<string, PreparedPicture>()
