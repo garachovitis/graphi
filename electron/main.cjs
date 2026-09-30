@@ -1,6 +1,10 @@
-// Grafi — Electron main process.
+// Graphi — Electron main process.
 // Responsibilities: windows, native menus, file dialogs & I/O, printing, PDF export,
-// spell-check context menu, OS file associations, recent documents.
+// context menu, OS file associations, recent documents.
+// Graphi is offline by design: the renderer can't reach the network (see `lockDownSession`) and
+// Chromium's own spell checker, which downloads dictionaries on Windows / Linux, is off —
+// proofing is Graphi's own, bundled with the app (src/proofing). The only download is a picture
+// the user asks for by URL (Insert ▸ Pictures ▸ From a URL), fetched here, not by the page.
 'use strict'
 
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell, session } = require('electron')
@@ -12,6 +16,7 @@ const { t, setLang, getLang, LANG_NAMES } = require('./i18n.cjs')
 const isMac = process.platform === 'darwin'
 const DEV_ICON = path.join(__dirname, '../build/icon.png')
 const DEV_URL = process.env.VITE_DEV_SERVER_URL
+const DEV_HOST = DEV_URL ? new URL(DEV_URL).host : null
 const OPENABLE = ['.docx', '.grafi', '.worder', '.html', '.htm', '.txt', '.md', '.odt']
 
 /** @type {Set<BrowserWindow>} */
@@ -62,7 +67,7 @@ function createWindow(openPath) {
     height: 900,
     minWidth: 480,
     minHeight: 600,
-    title: 'Grafi',
+    title: 'Graphi',
     // Packaged builds take the icon from electron-builder; this covers `npm run dev` on Windows / Linux.
     ...(app.isPackaged ? {} : { icon: DEV_ICON }),
     backgroundColor: '#1ab3ac',
@@ -77,7 +82,7 @@ function createWindow(openPath) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      spellcheck: true,
+      spellcheck: false,
     },
   })
   windows.add(win)
@@ -120,7 +125,7 @@ async function sendOpenPath(win, p) {
     win.webContents.send('file:opened', { path: p, name: path.basename(p), data: new Uint8Array(data) })
     addRecent(p)
   } catch (err) {
-    dialog.showErrorBox('Grafi', `${t('openFailed')}\n${p}\n\n${err.message}`)
+    dialog.showErrorBox('Graphi', `${t('openFailed')}\n${p}\n\n${err.message}`)
   }
 }
 
@@ -135,20 +140,9 @@ function openInWindow(p) {
   win.webContents.send('file:open-request', grant(p))
 }
 
-// ───────────────────────── context menu (spell-check) ─────────────────────────
+// ───────────────────────── context menu ─────────────────────────
 function showContextMenu(win, params) {
   const m = []
-  if (params.misspelledWord) {
-    for (const s of params.dictionarySuggestions.slice(0, 6)) {
-      m.push({ label: s, click: () => win.webContents.replaceMisspelling(s) })
-    }
-    if (!params.dictionarySuggestions.length) m.push({ label: t('noSuggestions'), enabled: false })
-    m.push({
-      label: t('addToDictionary'),
-      click: () => win.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
-    })
-    m.push({ type: 'separator' })
-  }
   if (params.linkURL && /^https?:/i.test(params.linkURL)) {
     m.push({ label: t('openLink'), click: () => shell.openExternal(params.linkURL) })
     m.push({ type: 'separator' })
@@ -272,7 +266,7 @@ function buildMenu() {
       label: t('tools'),
       submenu: [
         { label: t('wordCount'), accelerator: 'CmdOrCtrl+Shift+G', click: send('wordCount') },
-        // Grafi's own checker (src/editor/Proofing.ts) — Greek + English, same on every OS
+        // Graphi's own checker (src/editor/Proofing.ts) — Greek + English, same on every OS
         { label: t('proofing'), accelerator: 'F7', click: send('proofing') },
         {
           label: t('displayLang'),
@@ -292,18 +286,11 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
-function setSpellLangs(langs) {
-  // macOS uses the native OS spell checker and ignores language selection.
-  if (isMac) return
-  const available = session.defaultSession.availableSpellCheckerLanguages
-  session.defaultSession.setSpellCheckerLanguages(langs.filter((l) => available.includes(l)))
-}
-
 // ───────────────────────── IPC ─────────────────────────
 // Built on demand so the names follow the current UI language.
 const filters = () => ({
   docx: { name: t('fDocx'), extensions: ['docx'] },
-  grafi: { name: t('fGrafi'), extensions: ['grafi', 'worder'] },
+  grafi: { name: t('fGraphi'), extensions: ['grafi', 'worder'] },
   odt: { name: t('fOdt'), extensions: ['odt'] },
   html: { name: t('fHtml'), extensions: ['html', 'htm'] },
   md: { name: 'Markdown', extensions: ['md'] },
@@ -419,13 +406,42 @@ ipcMain.handle('dialog:unsaved', async (e, name) => {
 
 ipcMain.handle('dialog:error', async (e, message) => {
   const win = BrowserWindow.fromWebContents(e.sender)
-  await dialog.showMessageBox(win, { type: 'error', message: 'Grafi', detail: String(message) })
+  await dialog.showMessageBox(win, { type: 'error', message: 'Graphi', detail: String(message) })
 })
 
 ipcMain.handle('app:lang', (_e, l) => applyLanguage(l))
 ipcMain.handle('recent:list', () => readRecent().filter((p) => fsSync.existsSync(p)))
 ipcMain.handle('shell:open', (_e, url) => { if (/^(https?|mailto):/i.test(url)) shell.openExternal(url) })
+// Insert ▸ Pictures ▸ From a URL. A separate in-memory session: no cookies, cache or credentials
+// shared with anything, and the page's own session stays offline.
+const IMAGE_MAX_BYTES = 50 * 1024 * 1024
+ipcMain.handle('net:fetch-image', async (_e, url) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) throw new Error(t('badUrl'))
+  const res = await session.fromPartition('grafi-picture-download', { cache: false }).fetch(url, { credentials: 'omit', redirect: 'follow' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase()
+  if (!type.startsWith('image/')) return { data: new Uint8Array(), type }
+  if (Number(res.headers.get('content-length')) > IMAGE_MAX_BYTES) throw new Error(t('imageTooLarge'))
+  const data = new Uint8Array(await res.arrayBuffer())
+  if (data.length > IMAGE_MAX_BYTES) throw new Error(t('imageTooLarge'))
+  return { data, type }
+})
 ipcMain.handle('shell:reveal', (_e, p) => { if (isGranted(p)) shell.showItemInFolder(p) })
+
+// ───────────────────────── security ─────────────────────────
+// Local Font Access (real font list in the font picker) and the clipboard; nothing else —
+// no camera, microphone, location, notifications…
+const PERMISSIONS = new Set(['local-fonts', 'clipboard-read', 'clipboard-sanitized-write'])
+
+function lockDownSession(ses) {
+  ses.setPermissionRequestHandler((_wc, permission, cb) => cb(PERMISSIONS.has(permission)))
+  ses.setPermissionCheckHandler((_wc, permission) => PERMISSIONS.has(permission))
+  // No network traffic from the renderer, whatever a document or a bug might try (remote images,
+  // fetch, WebSockets). Only the Vite dev server gets through, in development.
+  ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (req, cb) => {
+    cb({ cancel: !(DEV_HOST && new URL(req.url).host === DEV_HOST) })
+  })
+}
 
 // ───────────────────────── lifecycle ─────────────────────────
 if (process.env.GRAFI_SELFTEST) require('./selftest.cjs')(process.env.GRAFI_SELFTEST, grant)
@@ -454,14 +470,8 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(() => {
     if (!app.isPackaged && isMac) app.dock?.setIcon(DEV_ICON)
-    // Local Font Access API → real list of installed fonts in the font picker.
-    // Microphone (never camera) for Home ▸ Dictate; macOS asks the user once on first use.
-    const allowed = (permission, mediaTypes) => permission === 'local-fonts' || permission === 'clipboard-read' || permission === 'clipboard-sanitized-write'
-      || (permission === 'media' && (mediaTypes ?? ['audio']).every((m) => m === 'audio'))
-    session.defaultSession.setPermissionRequestHandler((_wc, permission, cb, details) => cb(allowed(permission, details?.mediaTypes)))
-    session.defaultSession.setPermissionCheckHandler((_wc, permission, _origin, details) => allowed(permission, details?.mediaType ? [details.mediaType] : undefined))
+    lockDownSession(session.defaultSession)
     setLang(readPrefs().lang || 'el')
-    setSpellLangs(['el', 'en-US'])
     buildMenu()
 
     const files = [...pendingOpen, ...fileArgs(process.argv)].map(grant)

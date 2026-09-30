@@ -1,8 +1,8 @@
-# Grafi — Screenshots
+# Graphi — Screenshots
 
 ## English
 
-**Grafi** is a word processor for macOS, Windows, Linux, iOS, Android and the web. It opens and saves
+**Graphi** is a word processor for macOS, Windows, Linux, iOS, Android and the web. It opens and saves
 **DOCX** and **ODT**, exports **PDF** and prints, and what you see on screen is exactly what ends up on
 paper: lines and pages break in the same place on screen, in print and in the PDF.
 
@@ -14,7 +14,8 @@ What we are building:
   (circle, star, …) or to an aspect ratio, add shadows and rounded corners, drag it anywhere on the page.
 - **Tables and auto-numbered captions.** “Figure 1”, “Table 1” are numbered automatically, above or below
   the object, and are translated with the interface language.
-- **Proofing for Greek and English**, spelling and grammar, plus **offline voice dictation**.
+- **Proofing for Greek and English**, spelling and grammar, entirely on your device.
+- **Private by design.** No accounts, no telemetry, no network: documents never leave your computer.
 - **Familiar ribbon**, a command search box, templates (letter, report, CV, minutes, invoice, flyer…),
   built-in training, and light / dark themes.
 - **Word-compatible output.** The Carlito and Arimo fonts (metric-compatible with Calibri and Arial) are
@@ -22,7 +23,7 @@ What we are building:
 
 ## Ελληνικά
 
-Το **Grafi** είναι επεξεργαστής κειμένου για macOS, Windows, Linux, iOS, Android και web. Ανοίγει και
+Το **Graphi** είναι επεξεργαστής κειμένου για macOS, Windows, Linux, iOS, Android και web. Ανοίγει και
 αποθηκεύει **DOCX** και **ODT**, εξάγει **PDF** και εκτυπώνει. Ό,τι βλέπετε στην οθόνη είναι ακριβώς
 αυτό που θα βγει στο χαρτί: οι γραμμές και οι σελίδες σπάνε στο ίδιο σημείο στην οθόνη, στην εκτύπωση
 και στο PDF.
@@ -36,8 +37,9 @@ What we are building:
   περικοπή σε σχήμα (κύκλος, αστέρι…) ή σε αναλογία, σκιές, στρογγυλεμένες γωνίες, ελεύθερη τοποθέτηση.
 - **Πίνακες και λεζάντες με αυτόματη αρίθμηση.** «Εικόνα 1», «Πίνακας 1», πάνω ή κάτω από το αντικείμενο,
   που μεταφράζονται μαζί με τη γλώσσα της εφαρμογής.
-- **Ορθογραφικός και γραμματικός έλεγχος** στα ελληνικά και αγγλικά, και **υπαγόρευση με φωνή** χωρίς
-  σύνδεση στο internet.
+- **Ορθογραφικός και γραμματικός έλεγχος** στα ελληνικά και αγγλικά, εξ ολοκλήρου στη συσκευή.
+- **Ιδιωτικότητα από τον σχεδιασμό.** Χωρίς λογαριασμούς, χωρίς τηλεμετρία, χωρίς δίκτυο: τα έγγραφα δεν
+  φεύγουν ποτέ από τον υπολογιστή σας.
 - **Γνώριμη κορδέλα**, αναζήτηση εντολών, πρότυπα (επιστολή, αναφορά, βιογραφικό, πρακτικά, προσφορά,
   φυλλάδιο…), ενσωματωμένη εκπαίδευση, ανοιχτόχρωμο και σκουρόχρωμο θέμα.
 - **Συμβατότητα με το Word.** Οι γραμματοσειρές Carlito και Arimo (ίδιες διαστάσεις με Calibri και Arial)

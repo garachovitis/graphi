@@ -1,4 +1,4 @@
-// Grafi service worker: offline app shell. Network-first for the HTML (so updates
+// Graphi service worker: offline app shell. Network-first for the HTML (so updates
 // arrive), cache-first for hashed assets (immutable), fonts and icons.
 const CACHE = 'grafi-v2'
 self.addEventListener('install', (e) => { self.skipWaiting() })

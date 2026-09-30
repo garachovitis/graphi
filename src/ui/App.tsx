@@ -28,13 +28,12 @@ import { Canvas, isReflow } from './Canvas'
 import { StatusBar } from './StatusBar'
 import { Backstage, type BackstagePage } from './Backstage'
 import { FindBar } from './FindBar'
-import { DictationBar } from './DictationBar'
-import { dictation } from '../dictation'
 import { ProofPanel, ProofPopover } from './ProofPanel'
 import { proofConfig, setProofConfig, setProofPanelOpen } from '../editor/Proofing'
 import { Dialogs, type DialogState } from './dialogs'
 import { Toasts, toast } from './toast'
 import { TrainingCoach, lessonDoc } from './Training'
+import { WelcomeDialog } from './WelcomeDialog'
 import { t, tAll, fmtDate, setLang, useLang } from '../i18n'
 
 export interface DesignPreview { theme?: DocTheme; styleSet?: string }
@@ -106,6 +105,11 @@ const RECOVERY_PREFIX = 'grafi:recovery:'
 const RECOVERY_KEY = RECOVERY_PREFIX + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 const RECOVERY_EVERY = 30000
 const dropRecovery = (key: string) => { try { localStorage.removeItem(key) } catch { /* private mode */ } }
+const WELCOME_KEY = 'grafi:welcome:v1'
+
+function isFirstOpen() {
+  try { return localStorage.getItem(WELCOME_KEY) !== 'seen' } catch { return true }
+}
 
 interface Recovery { at: number; name: string; settings: DocSettings; content: JSONContent }
 function takeAbandonedRecovery(): Recovery | null {
@@ -146,6 +150,7 @@ export function App() {
   const [painter, setPainter] = useState<PaintedFormat | null>(null)
   const [training, setTraining] = useState<string | null>(null)
   const [trainingRun, setTrainingRun] = useState(0)
+  const [showWelcome, setShowWelcome] = useState(isFirstOpen)
   const [, force] = useReducer((x: number) => x + 1, 0)
   const pristine = useRef(true)
   const fileInput = useRef<HTMLInputElement>(null)
@@ -216,7 +221,7 @@ export function App() {
   }, [])
 
   useEffect(() => {
-    // Grafi's own checker (editor/Proofing.ts) replaces the browser's: one set of underlines, same on every platform.
+    // Graphi's own checker (editor/Proofing.ts) replaces the browser's: one set of underlines, same on every platform.
     editor?.view.dom.setAttribute('spellcheck', 'false')
   }, [editor])
 
@@ -247,7 +252,7 @@ export function App() {
 
   useEffect(() => {
     const title = `${file.name}${settings.title && settings.title !== file.name ? ` — ${settings.title}` : ''}`
-    platform.setWindowState({ title: `${title} — Grafi`, dirty, filePath: file.path })
+    platform.setWindowState({ title: `${title} — Graphi`, dirty, filePath: file.path })
   }, [file, dirty, settings.title])
 
   // Manual zoom disables "fit page width" (the default on phones).
@@ -420,7 +425,7 @@ export function App() {
 
   const exportPdf = useCallback(async () => {
     const restore = await beforeOutput()
-    // The PDF's Title comes from document.title: the document's name, not the window's "● … — Grafi".
+    // The PDF's Title comes from document.title: the document's name, not the window's "● … — Graphi".
     const winTitle = document.title
     document.title = settings.title || baseName(file.name)
     const bytes = await platform.renderPdf(pageSpecRef.current()).finally(() => { document.title = winTitle })
@@ -512,7 +517,6 @@ export function App() {
       case 'redo': if (inField()) document.execCommand('redo'); else c().redo().run(); break
       case 'find': setFind('find'); break
       case 'replace': setFind('replace'); break
-      case 'dictate': void dictation.toggle(editor); break
       case 'viewPrint': setView('print'); break
       case 'viewWeb': setView('web'); break
       case 'toggleRuler': setShowRuler((x) => !x); break
@@ -572,8 +576,6 @@ export function App() {
       if (e.key === 'Escape') { setFind(null); setBackstage(null) }
       // F7 = Spelling & Grammar, as in Word (Electron's menu owns it on desktop)
       if (e.key === 'F7' && !isNative && !mod) { e.preventDefault(); runRef.current('proofing') }
-      // Word's Dictate shortcut (Alt+`), by key position so it also works on the Greek layout.
-      if (e.altKey && !mod && e.code === 'Backquote') { e.preventDefault(); runRef.current('dictate'); return }
       if (!mod) return
       const k = e.key.toLowerCase()
       const map: Record<string, string> = isNative
@@ -628,6 +630,16 @@ export function App() {
 
   if (!editor) return null
 
+  const closeWelcome = () => {
+    try { localStorage.setItem(WELCOME_KEY, 'seen') } catch { /* private mode */ }
+    setShowWelcome(false)
+  }
+
+  const openTrainingFromWelcome = () => {
+    closeWelcome()
+    setBackstage('training')
+  }
+
   const api: AppApi = {
     editor, settings, setSettings, previewDesign: setPreview, file, dirty, view, setView, zoom, setZoom, showRuler, setShowRuler, showMarks, setShowMarks,
     spellcheck, setSpellcheck, proofOpen, setProofOpen, openDialog: setDialog, openFind: setFind, openBackstage: setBackstage, painter, startPainter, run,
@@ -641,13 +653,13 @@ export function App() {
         <Canvas api={api} />
         {find && <FindBar editor={editor} mode={find} setMode={setFind} onClose={() => { setFind(null); editor.commands.clearSearch(); editor.commands.focus() }} />}
         {proofOpen && <ProofPanel api={api} onClose={() => { setProofOpen(false); editor.commands.focus() }} />}
-        <DictationBar editor={editor} />
       </div>
       <ProofPopover api={api} panelOpen={proofOpen} openPanel={() => setProofOpen(true)} />
       <StatusBar api={api} />
       {backstage && <Backstage api={api} page={backstage} setPage={setBackstage} onClose={() => { setBackstage(null); editor.commands.focus() }} />}
       {training && <TrainingCoach key={`${training}-${trainingRun}`} api={api} lessonId={training} hidden={!!backstage} onClose={() => { setTraining(null); editor.commands.focus() }} />}
       <Dialogs api={api} dialog={dialog} close={() => { setDialog(null); editor.commands.focus() }} />
+      {showWelcome && <WelcomeDialog onTraining={openTrainingFromWelcome} onClose={closeWelcome} />}
       <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/bmp" multiple className="hidden-input"
         onChange={(e) => { if (e.target.files) insertImageFiles(e.target.files, pendingImagePos.current); e.target.value = '' }} />
       <Toasts />

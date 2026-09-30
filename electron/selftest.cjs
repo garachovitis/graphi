@@ -16,7 +16,7 @@ module.exports = function selftest(outDir, grant) {
         results.bridge = await js('typeof window.grafiNative === "object" && window.grafiNative.platform')
         results.save = await js(`(async () => {
           const F = await import('/src/io/formats.ts')
-          const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Αυτοέλεγχος Grafi' }] }] }
+          const doc = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Αυτοέλεγχος Graphi' }] }] }
           const data = await F.serialize('docx', doc, (await import('/src/model/settings.ts')).DEFAULT_SETTINGS, new Map())
           return window.grafiNative.saveFile({ filePath: ${JSON.stringify(docx)}, suggestedName: 'selftest.docx', kind: 'docx', data })
         })()`)
@@ -32,10 +32,16 @@ module.exports = function selftest(outDir, grant) {
         results.blocked = await js(`window.grafiNative.readFile(${JSON.stringify(__filename)}).then(() => false, () => true)`)
         const pdf = await js('window.grafiNative.renderPdf().then(b => Array.from(b.slice(0, 5)))')
         results.pdfMagic = String.fromCharCode(...pdf)
-        await js('window.grafiNative.setWindowState({ title: "Selftest — Grafi", dirty: true, filePath: null })')
+        await js('window.grafiNative.setWindowState({ title: "Selftest — Graphi", dirty: true, filePath: null })')
         results.title = win.getTitle()
         results.recent = await js(`window.grafiNative.recent().then(r => r.includes(${JSON.stringify(docx)}))`)
-        results.ok = results.bridge && results.fileOnDisk > 0 && results.reopen === 'Αυτοέλεγχος Grafi' && results.pdfMagic === '%PDF-' && results.recent && results.blocked
+        // Offline by design: the page can't reach any server, nor use the microphone.
+        results.offline = await js(`Promise.all([
+          fetch('https://example.com/').then(() => false, () => true),
+          new Promise((r) => { const i = new Image(); i.onload = () => r(false); i.onerror = () => r(true); i.src = 'https://example.com/x.png?' + Date.now() }),
+          navigator.mediaDevices.getUserMedia({ audio: true }).then(() => false, () => true),
+        ]).then((a) => a.every(Boolean))`)
+        results.ok = results.bridge && results.fileOnDisk > 0 && results.reopen === 'Αυτοέλεγχος Graphi' && results.pdfMagic === '%PDF-' && results.recent && results.blocked && results.offline
       } catch (err) {
         results.error = String(err && err.stack || err)
       }

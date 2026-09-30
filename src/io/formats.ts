@@ -85,7 +85,7 @@ export function exportHtml(doc: JSONContent, settings: DocSettings, pages: Map<n
   const html = `<!doctype html>
 <html lang="${getLang()}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="generator" content="Grafi">
+<meta name="generator" content="Graphi">
 <title>${escapeHtml(settings.title || t('io.untitled'))}</title>
 <style>
 body{margin:0;background:#eef1f1}

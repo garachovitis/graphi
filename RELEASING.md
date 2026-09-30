@@ -6,10 +6,10 @@
 
 | Αρχείο | Τι είναι |
 |---|---|
-| `Grafi Setup x.y.z.exe` | Installer NSIS (x64 + arm64), με επιλογή φακέλου και συντόμευση στην επιφάνεια εργασίας |
-| `Grafi x.y.z.exe` | Portable (x64), τρέχει χωρίς εγκατάσταση |
-| `Grafi-x.y.z-arm64.dmg` / `Grafi-x.y.z.dmg` | macOS installer για Apple Silicon / Intel |
-| `Grafi-x.y.z-arm64-mac.zip` / `Grafi-x.y.z-mac.zip` | Το ίδιο app σε zip (για μελλοντικό auto-update) |
+| `Graphi Setup x.y.z.exe` | Installer NSIS (x64 + arm64), με επιλογή φακέλου και συντόμευση στην επιφάνεια εργασίας |
+| `Graphi x.y.z.exe` | Portable (x64), τρέχει χωρίς εγκατάσταση |
+| `Graphi-x.y.z-arm64.dmg` / `Graphi-x.y.z.dmg` | macOS installer για Apple Silicon / Intel |
+| `Graphi-x.y.z-arm64-mac.zip` / `Graphi-x.y.z-mac.zip` | Το ίδιο app σε zip (για μελλοντικό auto-update) |
 | `*.blockmap`, `latest.yml`, `latest-mac.yml` | Μεταδεδομένα του electron-builder (για μελλοντικό auto-update) |
 
 ## Νέα έκδοση — βήμα προς βήμα
@@ -21,7 +21,7 @@ git push --follow-tags     # σπρώχνει το commit και το tag
 ```
 
 1. Το push του tag `v1.0.1` ξεκινά το workflow **Release (Windows + macOS)** (tab *Actions* στο GitHub).
-2. Σε ~10 λεπτά εμφανίζεται στο *Releases* το **Grafi v1.0.1** με τα `.exe` και αυτόματες release notes.
+2. Σε ~10 λεπτά εμφανίζεται στο *Releases* το **Graphi v1.0.1** με τα `.exe` και αυτόματες release notes.
 3. Αν θες, κάνε *Edit* στο release για να γράψεις σημειώσεις με το χέρι.
 
 Χρησιμοποίησε `npm version patch | minor | major` αν δεν θες να γράψεις τον αριθμό.
@@ -56,7 +56,7 @@ npm run dist:win           # τα αρχεία βγαίνουν στο release/
 ## macOS: υπογραφή
 
 Το app υπογράφεται ad-hoc (`mac.identity: "-"`), χωρίς Apple Developer ID / notarization. Την πρώτη φορά
-το macOS λέει ότι δεν μπορεί να επαληθεύσει τον δημιουργό: *δεξί κλικ στο Grafi → Άνοιγμα*, ή
+το macOS λέει ότι δεν μπορεί να επαληθεύσει τον δημιουργό: *δεξί κλικ στο Graphi → Άνοιγμα*, ή
 *Ρυθμίσεις → Απόρρητο και ασφάλεια → Άνοιγμα οπωσδήποτε*.
 
 ## Αν κάτι πάει στραβά

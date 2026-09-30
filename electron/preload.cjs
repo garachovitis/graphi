@@ -1,4 +1,4 @@
-// Grafi — preload: exposes a minimal, typed bridge to the renderer (see src/platform.ts).
+// Graphi — preload: exposes a minimal, typed bridge to the renderer (see src/platform.ts).
 'use strict'
 const { contextBridge, ipcRenderer } = require('electron')
 
@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('grafiNative', {
   showError: (m) => ipcRenderer.invoke('dialog:error', m),
   recent: () => ipcRenderer.invoke('recent:list'),
   openExternal: (u) => ipcRenderer.invoke('shell:open', u),
+  fetchImage: (u) => ipcRenderer.invoke('net:fetch-image', u),
   reveal: (p) => ipcRenderer.invoke('shell:reveal', p),
   setLanguage: (l) => ipcRenderer.invoke('app:lang', l),
   onMenu: (cb) => on('menu', cb),

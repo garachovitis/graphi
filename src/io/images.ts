@@ -45,14 +45,10 @@ export function loadImage(src: string): Promise<HTMLImageElement> {
 /** Raster formats every word processor understands. Everything else → PNG. */
 export async function toPortableImage(src: string): Promise<{ bytes: Uint8Array; type: 'png' | 'jpg' | 'gif' | 'bmp'; mime: string; w: number; h: number } | null> {
   try {
-    let url = src
-    if (!src.startsWith('data:')) {
-      const res = await fetch(src)
-      url = await blobToDataUrl(await res.blob())
-    }
-    const img = await loadImage(url)
-    const parsed = dataUrlToBytes(url)
+    // Pictures are always embedded (see Picture.parseHTML): there is nothing to download.
+    const parsed = dataUrlToBytes(src)
     if (!parsed) return null
+    const img = await loadImage(src)
     const map: Record<string, 'png' | 'jpg' | 'gif' | 'bmp'> = {
       'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/gif': 'gif', 'image/bmp': 'bmp',
     }

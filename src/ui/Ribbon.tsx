@@ -27,8 +27,6 @@ import { Ill } from './illustrations'
 import type { BreakKind } from '../editor/nodes'
 import { insertTrainingImage } from './Training'
 import { t, fmtNum, fmtDate, fmtLongDate, numText } from '../i18n'
-import { dictation, useDictation, useDictPrefs, engines as dictationEngines, currentEngine } from '../dictation'
-import { COMMAND_HELP } from '../dictation/text'
 
 type TabId = 'home' | 'insert' | 'design' | 'layout' | 'references' | 'review' | 'view' | 'table' | 'picture'
 
@@ -293,46 +291,7 @@ function HomeTab({ api }: { api: AppApi }) {
         <Btn big icon={ill('replace', B)} label={t('edit.replace')} title={`${t('edit.replace')} (${modKey}H)`} onClick={() => api.openFind('replace')} />
       </Group>
 
-      <VoiceGroup api={api} />
     </>
-  )
-}
-
-/** Home ▸ Voice ▸ Dictate: split button, the arrow holds language, punctuation, engine and the command list. */
-function VoiceGroup({ api }: { api: AppApi }) {
-  const d = useDictation()
-  const prefs = useDictPrefs()
-  const on = d.phase !== 'idle'
-  const engines = dictationEngines()
-  const current = currentEngine()
-  const set = (p: Partial<typeof prefs>, close: () => void) => { dictation.setPrefs(p); close() }
-  return (
-    <Group label={t('g.voice')}>
-      <Dropdown big icon={ill(on ? 'dictateOn' : 'dictate', B)} label={t('dict.dictate')} active={on} popClass="dict-pop"
-        title={`${on ? t('dict.stop') : t('dict.dictate')} (Alt+\`)`} onClick={() => api.run('dictate')}>
-        {(close) => (
-          <>
-            <MenuTitle>{t('dict.language')}</MenuTitle>
-            <MenuItem label={t('dict.langEl')} active={prefs.lang === 'el'} onClick={() => set({ lang: 'el' }, close)} />
-            <MenuItem label={t('dict.langEn')} active={prefs.lang === 'en'} onClick={() => set({ lang: 'en' }, close)} />
-            <MenuSep />
-            <MenuItem label={t('dict.autoPunct')} active={prefs.autoPunct} onClick={() => set({ autoPunct: !prefs.autoPunct }, close)} />
-            {engines.length > 1 && (
-              <>
-                <MenuSep />
-                <MenuTitle>{t('dict.engine')}</MenuTitle>
-                {engines.map((id) => <MenuItem key={id} label={t(`dict.engine.${id}`)} active={id === current} onClick={() => set({ engine: id }, close)} />)}
-              </>
-            )}
-            <MenuSep />
-            <MenuTitle>{t('dict.commands')} · {t('dict.say')}:</MenuTitle>
-            <div className="dict-help inline">
-              {COMMAND_HELP[prefs.lang].map(([say, mark]) => <div key={say} className="dict-help-row"><span>{say}</span><b>{mark}</b></div>)}
-            </div>
-          </>
-        )}
-      </Dropdown>
-    </Group>
   )
 }
 

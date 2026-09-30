@@ -12,6 +12,8 @@
 //   • headings / "keep with next" paragraphs move to the next page when the block
 //     that follows would not start on the same page;
 //   • atomic blocks (tables, rules, TOC) move as a whole when they fit on a page;
+//   • a square-wrapped picture stays on the page of the line it is anchored on (it may hang
+//     over the following paragraphs, which wrap around it — so it is measured on its own);
 //   • hard page breaks and "page break before" force the next block to a new page.
 //
 // Spacers are decorations, never document content, so the model stays clean and
@@ -39,12 +41,25 @@ export const paginationConfig: PaginationConfig = { enabled: true, pitch: 1123 +
 
 export const paginationKey = new PluginKey<DecorationSet>('pagination')
 
+/** Each editor's "lay out now" (see relayoutNow). */
+const runners = new WeakMap<EditorView, () => void>()
+
 /**
  * `top` marks a block that was moved whole to a new page: in print the forced break
  * propagates to the block's start (CSS Fragmentation), so its space-before must be
  * suppressed there — exactly what Word does for a paragraph at the top of a page.
  */
-interface Spacer { pos: number; height: number; block: boolean; top?: { from: number; to: number }; pad?: boolean; padBase?: number; side?: 'odd' | 'even' }
+interface Spacer {
+  pos: number
+  height: number
+  block: boolean
+  /** Column y (px) where the content it pushes must start: the top of a page's text area. */
+  target: number
+  top?: { from: number; to: number }
+  pad?: boolean
+  padBase?: number
+  side?: 'odd' | 'even'
+}
 
 const CONTAINERS = new Set(['bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem', 'blockquote'])
 const TEXTBLOCKS = new Set(['paragraph', 'heading', 'codeBlock'])
@@ -52,10 +67,11 @@ const TOL = 0.75 // px tolerance against sub-pixel rounding
 /** Chromium lays out in 1/64 px units; quantizing spacer heights keeps predictions exact over hundreds of pages. */
 const q = (h: number) => Math.round(h * 64) / 64
 
-function makeSpacerDom(height: number, block: boolean, side?: 'odd' | 'even') {
-  const el = document.createElement(block ? 'div' : 'span')
-  el.className = (block ? 'pg-spacer pg-spacer-block' : 'pg-spacer') + (side ? ` pg-${side}` : '')
-  el.style.height = `${height}px`
+function makeSpacerDom(s: Spacer) {
+  const el = document.createElement(s.block ? 'div' : 'span')
+  el.className = (s.block ? 'pg-spacer pg-spacer-block' : 'pg-spacer') + (s.side ? ` pg-${s.side}` : '')
+  el.style.height = `${s.height}px`
+  el.dataset.pgPos = String(s.pos)
   el.setAttribute('contenteditable', 'false')
   el.setAttribute('aria-hidden', 'true')
   return el
@@ -71,7 +87,7 @@ function buildDecorations(doc: PMNode, spacers: Spacer[]) {
       decos.push(Decoration.node(s.top.from, s.top.to, { class: `pg-top pg-pad${s.side ? ` pg-${s.side}` : ''}`, style: `padding-top:${s.height + (s.padBase || 0)}px;--pg-base:${s.padBase || 0}px` }))
       continue
     }
-    decos.push(Decoration.widget(s.pos, () => makeSpacerDom(s.height, s.block, s.side), {
+    decos.push(Decoration.widget(s.pos, () => makeSpacerDom(s), {
       side: -1,
       key: `pg-${s.pos}-${Math.round(s.height)}-${s.block ? 'b' : 'i'}${s.side || ''}`,
       ignoreSelection: true,
@@ -85,7 +101,12 @@ function buildDecorations(doc: PMNode, spacers: Spacer[]) {
 // ───────────── measurement helpers ─────────────
 interface Frame { originTop: number; scale: number }
 
-interface Line { t: number; b: number }
+interface Line {
+  t: number
+  b: number
+  /** A top-and-bottom picture's band, not a line of text (widow / orphan control ignores it). */
+  pic?: boolean
+}
 
 interface Unit {
   kind: 'text' | 'atom' | 'break'
@@ -103,9 +124,13 @@ interface Unit {
   textTops?: number[]
   /** the block's own padding-top (the page-push padding is added to it) */
   padTop?: number
-  /** Square-wrapped (floating) pictures anchored in this block, with the line they start on. */
+  /** Square-wrapped (floating) pictures anchored in this block: extent and the line they are anchored on. */
   floats?: { t: number; b: number; line: number }[]
+  /** The block anchors a floating picture (only then do its lines need measuring). */
+  hasFloat: boolean
 }
+
+const isFloat = (n: PMNode) => n.type.name === 'image' && n.attrs.wrap === 'square'
 
 function toCol(f: Frame, clientY: number) {
   return (clientY - f.originTop) / f.scale
@@ -141,6 +166,7 @@ function collectUnits(view: EditorView, f: Frame): Unit[] {
         heading: name === 'heading',
         keepNext: name === 'heading' || !!child.attrs.keepNext,
         breakBefore: !!child.attrs.pageBreakBefore,
+        hasFloat: child.inlineContent && child.content.content.some(isFloat),
       })
     })
   }
@@ -156,7 +182,7 @@ function measureLines(u: Unit, f: Frame): Line[] {
   u.contentTop = u.top + (parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth)) / 1
   u.contentBottom = u.bottom - (parseFloat(cs.paddingBottom) + parseFloat(cs.borderBottomWidth)) / 1
   const rects: Line[] = []
-  const floats: { t: number; b: number }[] = []
+  const floats: { t: number; b: number; anchor: number }[] = []
   // Text runs (excluding text that belongs to picture chrome such as hints).
   const tw = document.createTreeWalker(u.el, NodeFilter.SHOW_TEXT)
   const range = document.createRange()
@@ -171,8 +197,9 @@ function measureLines(u: Unit, f: Frame): Line[] {
     const r = pic.getBoundingClientRect()
     if (!r.height) continue
     const box = { t: toCol(f, r.top), b: toCol(f, r.bottom) }
-    if (pic.dataset.wrap === 'square') floats.push(box)
-    else rects.push(box)
+    // A float sits `margin-top` below the line it is anchored on (its free vertical offset).
+    if (pic.dataset.wrap === 'square') floats.push({ ...box, anchor: toCol(f, r.top - parseFloat(getComputedStyle(pic).marginTop) * f.scale) })
+    else rects.push({ ...box, pic: pic.dataset.wrap === 'topBottom' })
   }
   for (const br of u.el.querySelectorAll('br')) {
     const r = br.getBoundingClientRect()
@@ -185,6 +212,7 @@ function measureLines(u: Unit, f: Frame): Line[] {
     if (g && r.t < g.b - 1) {
       g.t = Math.min(g.t, r.t)
       g.b = Math.max(g.b, r.b)
+      g.pic = g.pic && r.pic
     } else groups.push({ ...r })
   }
   const textTops = groups.map((g) => g.t)
@@ -196,13 +224,13 @@ function measureLines(u: Unit, f: Frame): Line[] {
     const bounds = [u.contentTop]
     for (let i = 1; i < groups.length; i++) bounds.push((groups[i - 1].b + groups[i].t) / 2)
     bounds.push(u.contentBottom)
-    lines = groups.map((_, i) => ({ t: bounds[i], b: bounds[i + 1] }))
+    lines = groups.map((g, i) => ({ t: bounds[i], b: bounds[i + 1], pic: g.pic }))
   }
-  // A float starts on the line box that contains its top edge.
-  u.floats = floats.map((x) => {
-    let line = lines.findIndex((l) => x.t < l.b - 0.5)
+  // A float belongs to the line box it is anchored on: it moves when that line moves.
+  u.floats = floats.map(({ t, b, anchor }) => {
+    let line = lines.findIndex((l) => anchor < l.b - 0.5)
     if (line < 0) line = lines.length - 1
-    return { ...x, line }
+    return { t, b, line }
   })
   u.lines = lines
   u.textTops = textTops
@@ -257,12 +285,16 @@ function lineStartPos(view: EditorView, f: Frame, u: Unit, k: number): number {
   return lo
 }
 
+function frameOf(view: EditorView): Frame {
+  const root = view.dom as HTMLElement
+  const rr = root.getBoundingClientRect()
+  return { originTop: rr.top, scale: paginationConfig.scale || (root.offsetHeight ? rr.height / root.offsetHeight : 1) }
+}
+
 // ───────────── the page-breaking pass ─────────────
 function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; headings: Map<number, number> } {
   const { pitch: P, contentHeight: C } = paginationConfig
-  const root = view.dom as HTMLElement
-  const rr = root.getBoundingClientRect()
-  const f: Frame = { originTop: rr.top, scale: paginationConfig.scale || (root.offsetHeight ? rr.height / root.offsetHeight : 1) }
+  const f = frameOf(view)
   const units = collectUnits(view, f)
 
   const pageOf = (y: number) => Math.max(0, Math.floor((y + TOL) / P))
@@ -282,7 +314,7 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
     trace?.push({ pos: u.pos, k, lineTopNat: u.lines![k].t, glyphTopNat: u.textTops?.[k], shiftBefore: shift, targetTop, h, lines: u.lines!.slice(Math.max(0, k - 2), k + 2), textTops: u.textTops?.slice(Math.max(0, k - 2), k + 2) })
     if (h <= TOL) return
     spacers.push({
-      pos: lineStartPos(view, f, u, k), height: h, block: false,
+      pos: lineStartPos(view, f, u, k), height: h, block: false, target: targetTop,
       top: k === 0 ? { from: u.pos, to: u.pos + u.node.nodeSize } : undefined,
       pad: k === 0,
       padBase: k === 0 ? u.padTop : undefined,
@@ -314,7 +346,7 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
       if ((mustBreak || overflows || aT > pageBottom(pg)) && aT > pageTop(pg) + TOL) {
         const target = pageTop(mustBreak ? forcePage + 1 : pg + 1)
         const h = q(target - aT)
-        spacers.push({ pos: u.pos, height: h, block: true, side: mustBreak ? forceSide : undefined })
+        spacers.push({ pos: u.pos, height: h, block: true, target, side: mustBreak ? forceSide : undefined })
         shift += h
       }
       forcePage = -1
@@ -325,7 +357,7 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
 
     // Textblock. Fast path: the whole block sits inside one page's text area and has no
     // constraints that need line geometry → no per-line measurement at all.
-    if (forcePage < 0 && !u.breakBefore && !u.keepNext) {
+    if (forcePage < 0 && !u.breakBefore && !u.keepNext && !u.hasFloat) {
       const aT = u.top + shift
       const aB = u.bottom + shift
       const pg = pageOf(aT)
@@ -367,7 +399,7 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
     while (k < lines.length) {
       const aT = lines[k].t + shift
       // A floating picture anchored on this line must fit on the same page as the line.
-      const fl = u.floats?.filter((x) => x.line === k && x.b - lines[k].t <= C) || []
+      const fl = u.floats?.filter((x) => x.line === k && x.b - lines[k].t <= C) ?? []
       const aB = Math.max(lines[k].b, ...fl.map((x) => x.b)) + shift
       const pg = pageOf(aT)
       if (aB <= pageBottom(pg) + TOL) {
@@ -381,13 +413,16 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
       }
       let s = k
       const n = lines.length
-      if (n >= 2 && k === 1) s = 0 // orphan: don't leave a lone first line
-      else if (n >= 3 && k === n - 1) s = k - 1 // widow: don't carry a lone last line
-      // Lines beside a square-wrapped picture would re-wrap wider on the next page and
-      // change the paragraph's height, so only split below the picture (or move it whole).
-      if (u.floats?.length) {
-        const clear = Math.max(...u.floats.map((x) => x.b))
-        while (s > 0 && lines[s].t < clear - 1) s--
+      // Widow / orphan control is about lines of text: a picture band may end or start a page alone.
+      if (n >= 2 && k === 1 && !lines[0].pic) s = 0 // orphan: don't leave a lone first line
+      else if (n >= 3 && k === n - 1 && !lines[k - 1].pic) s = k - 1 // widow: don't carry a lone last line
+      // A floating picture stays with its anchor line, and the lines beside it would re-wrap
+      // wider on the next page: never split between the anchor line and the picture's bottom.
+      // Split just below the picture (it fits on this page), else above its anchor line.
+      for (const fl of u.floats ?? []) {
+        let last = fl.line
+        while (last + 1 < n && lines[last + 1].t < fl.b - 1) last++
+        if (s > fl.line && s <= last) s = k > last ? last + 1 : fl.line
       }
       const sTop = lines[s].t + shift
       if (s < k && sTop <= pageTop(pageOf(sTop)) + TOL) s = k // would not gain anything
@@ -397,12 +432,45 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
     }
 
     if (u.heading) headings.set(u.pos, pageOf(lines[0].t + shift) + 1)
-    lastBottom = u.bottom + shift
+    // A picture hanging below the document's last paragraph still needs its page.
+    lastBottom = Math.max(u.bottom, ...(u.floats ?? []).map((x) => x.b)) + shift
   }
 
   if (trace) (window as any).__pgTraceOut = trace
   const pages = Math.max(1, pageOf(Math.max(0, lastBottom - 1)) + 1, forcePage >= 0 ? forcePage + 2 : 1)
   return { spacers, pages, headings }
+}
+
+/** Column y (px) where the content pushed by `s` actually starts now. */
+function pushedStart(view: EditorView, f: Frame, s: Spacer): number | null {
+  if (s.pad && s.top) {
+    const el = view.nodeDOM(s.top.from) as HTMLElement | null
+    if (!el || el.nodeType !== 1) return null
+    const cs = getComputedStyle(el)
+    return toCol(f, el.getBoundingClientRect().top) + parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth)
+  }
+  const el = view.dom.querySelector<HTMLElement>(`.pg-spacer[data-pg-pos="${s.pos}"]`)
+  return el ? toCol(f, el.getBoundingClientRect().bottom) : null
+}
+
+/**
+ * The pass above predicts from the natural layout. Lines carried past a floating picture re-wrap
+ * wider on their new page (the picture is no longer beside them), which it cannot foresee: so check
+ * where each pushed piece really starts, in order, and correct its spacer by the difference.
+ * Returns the corrected spacers (the same array when nothing was off).
+ */
+function reconcile(view: EditorView, spacers: Spacer[], apply: (s: Spacer[]) => void): Spacer[] {
+  let out = spacers
+  for (let i = 0; i < out.length; i++) {
+    const at = pushedStart(view, frameOf(view), out[i])
+    if (at == null) continue
+    const d = out[i].target - at
+    if (Math.abs(d) <= TOL) continue
+    out = out.slice()
+    out[i] = { ...out[i], height: Math.max(0, q(out[i].height + d)) }
+    apply(out) // later spacers are measured on the corrected layout
+  }
+  return out
 }
 
 function sameSpacers(a: Spacer[], b: Spacer[]) {
@@ -418,7 +486,8 @@ export const Pagination = Extension.create({
   name: 'pagination',
 
   addProseMirrorPlugins() {
-    let current: Spacer[] = []
+    let computed: Spacer[] = [] // the last result of computeLayout
+    let current: Spacer[] = [] // what is applied: `computed`, reconciled with the real layout
 
     return [
       new Plugin<DecorationSet>({
@@ -441,12 +510,13 @@ export const Pagination = Extension.create({
           const wrapper = () => view.dom.parentElement
 
           const run = () => {
+            if (timer) clearTimeout(timer)
             timer = 0
             if (view.isDestroyed) return
             const w = wrapper()
             if (!paginationConfig.enabled) {
               if (current.length) {
-                current = []
+                computed = current = []
                 view.dispatch(view.state.tr.setMeta(paginationKey, []).setMeta('addToHistory', false))
               }
               const pages = new Map<number, number>()
@@ -467,11 +537,15 @@ export const Pagination = Extension.create({
             // a block whose type changes (paragraph → heading) is replaced, and its page-push goes with it.
             const want = result.spacers.reduce((n, sp) => n + (sp.pad && sp.top ? 1 : sp.top ? 2 : 1), 0)
             const have = paginationKey.getState(view.state)?.find().length ?? 0
-            if (!sameSpacers(result.spacers, current) || have !== want) {
-              current = result.spacers
-              view.dispatch(view.state.tr.setMeta(paginationKey, current).setMeta('addToHistory', false))
+            const apply = (s: Spacer[]) => view.dispatch(view.state.tr.setMeta(paginationKey, s).setMeta('addToHistory', false))
+            if (!sameSpacers(result.spacers, computed) || have !== want) {
+              computed = current = result.spacers
+              apply(current)
             }
+            current = reconcile(view, current, apply)
           }
+
+          runners.set(view, run)
 
           // Plain timers (not rAF): layout must stay correct even when the window is hidden.
           const schedule = (delay = 40) => {
@@ -495,6 +569,7 @@ export const Pagination = Extension.create({
               if (v.state.doc !== prev.doc) schedule()
             },
             destroy() {
+              runners.delete(view)
               ro.disconnect()
               view.dom.removeEventListener('load', onLoad, true)
               window.removeEventListener('grafi:relayout', onRelayout)
@@ -506,6 +581,33 @@ export const Pagination = Extension.create({
     ]
   },
 })
+
+/** Index of the page (sheet) that column y `top` (px) falls on; 0 when not paginated. */
+export function pageAt(top: number): number {
+  const { enabled, pitch } = paginationConfig
+  return enabled ? Math.max(0, Math.floor(top / pitch)) : 0
+}
+
+/**
+ * Where a box `height` px tall that should start at `top` (column px) fits inside one page's text
+ * area: pulled up off the bottom margin, or onto the next page from the gap between sheets.
+ * A floating picture must fit on its page (see computeLayout), so a drop is placed where it will stay.
+ */
+export function fitOnPage(top: number, height: number): number {
+  const { enabled, pitch: P, contentHeight: C } = paginationConfig
+  if (!enabled || height > C) return top
+  const page = pageAt(top)
+  if (top > page * P + C) return (page + 1) * P
+  return Math.max(page * P, Math.min(top, page * P + C - height))
+}
+
+/**
+ * Paginate `view` synchronously, now, instead of after the usual short delay — for code that must
+ * measure the paginated result right away (moving a picture). A decoration-only update: no history.
+ */
+export function relayoutNow(view: EditorView) {
+  runners.get(view)?.()
+}
 
 /** Ask the pagination engine to re-measure (after page setup / zoom / view changes). */
 export function requestRelayout() {

@@ -13,8 +13,8 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
 /**
- * Grafi printing on Android. The Capacitor WebView is Chromium, so the document's print CSS
- * (@page size, margins, header/footer margin boxes) and Grafi's forced page breaks apply
+ * Graphi printing on Android. The Capacitor WebView is Chromium, so the document's print CSS
+ * (@page size, margins, header/footer margin boxes) and Graphi's forced page breaks apply
  * exactly as on desktop. The system print dialog offers every printer plus "Save as PDF".
  */
 @CapacitorPlugin(name = "GrafiPrint")
@@ -29,13 +29,13 @@ public class GrafiPrintPlugin extends Plugin {
                 call.reject("Η εκτύπωση δεν είναι διαθέσιμη");
                 return;
             }
-            String name = call.getString("name", "Grafi");
+            String name = call.getString("name", "Graphi");
             double wMm = call.getDouble("width", 210.0);
             double hMm = call.getDouble("height", 297.0);
             // MediaSize is expressed in mils (1/1000 inch).
             int wMils = (int) Math.round(Math.min(wMm, hMm) / 25.4 * 1000);
             int hMils = (int) Math.round(Math.max(wMm, hMm) / 25.4 * 1000);
-            PrintAttributes.MediaSize size = new PrintAttributes.MediaSize("grafi_page", "Grafi", wMils, hMils);
+            PrintAttributes.MediaSize size = new PrintAttributes.MediaSize("grafi_page", "Graphi", wMils, hMils);
             if (wMm > hMm) size = size.asLandscape();
             PrintAttributes attrs = new PrintAttributes.Builder()
                 .setMediaSize(size)

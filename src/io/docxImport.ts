@@ -10,9 +10,11 @@
 // page geometry.
 import JSZip from 'jszip'
 import type { JSONContent } from '@tiptap/core'
-import { DEFAULT_SETTINGS, detectPaper, normalizeSettings, twipToMm, type DocSettings, type HFAlign } from '../model/settings'
+import { DEFAULT_SETTINGS, detectPaper, mmToPx, normalizeSettings, twipToMm, type DocSettings, type HFAlign } from '../model/settings'
 import { DEFAULT_FONT, PARA_STYLES, fontStack, type ParaStyle } from '../model/styles'
 import { bytesToDataUrl } from './images'
+import { hoistToStart } from './pictures'
+import { MIN_Y, squareSide } from '../editor/image'
 import { colorDistance, isHex, parseThemeRef, parseThemeXml, resolveColor, snapPct, themeVar, type DocTheme, type Slot } from '../model/themes'
 import { t } from '../i18n'
 
@@ -53,7 +55,7 @@ const THEME_SLOT: Record<string, Slot> = {
   accent1: 'accent1', accent2: 'accent2', accent3: 'accent3', accent4: 'accent4', accent5: 'accent5', accent6: 'accent6',
   hyperlink: 'hlink', followedHyperlink: 'folHlink',
 }
-/** w:themeColor (+ w:themeTint / w:themeShade) → a theme-linked colour, when it is one Grafi can express. */
+/** w:themeColor (+ w:themeTint / w:themeShade) → a theme-linked colour, when it is one Graphi can express. */
 function themeLinked(el: El, prefix: 'Color' | 'Fill', theme: Theme): string | null {
   const slot = THEME_SLOT[attr(el, `w:theme${prefix}`) || '']
   if (!slot || !theme.doc) return null
@@ -272,6 +274,10 @@ interface Ctx {
   media: Map<string, string>
   warnings: Set<string>
   headingNumbers?: boolean
+  /** Floating pictures positioned from their paragraph's top (moved to its start, see pictures.ts). */
+  paragraphAnchored: WeakSet<JSONContent>
+  /** Square pictures Word wraps on both sides: the side is picked from the position once the column width is known. */
+  sideByPosition: Set<JSONContent>
 }
 
 const MIME: Record<string, string> = {
@@ -384,6 +390,7 @@ function readParagraph(p: El, ctx: Ctx): ParaOut {
     if (inline.length && inline.every((n) => n.type === 'image' || (n.type === 'text' && !n.text!.trim()))) {
       for (const n of inline) if (n.type === 'image' && !n.attrs!.wrap) n.attrs = { ...n.attrs, wrap: 'topBottom', align: (attrs.textAlign as string) || st.align || 'left' }
     }
+    inline = hoistToStart(inline, (n) => ctx.paragraphAnchored.has(n))
     blocks.push({ type, attrs: { ...attrs }, content: inline.length ? inline : undefined })
     inline = []
     delete attrs.pageBreakBefore
@@ -518,6 +525,8 @@ function readImage(el: El, ctx: Ctx): JSONContent | null {
   let align = 'center'
   let x: number | null = null
   let y: number | null = null
+  let paragraphRelative = false
+  let sideByPosition = false
   const anchor = el.getElementsByTagName('wp:anchor')[0]
   if (anchor) {
     const has = (t: string) => anchor.getElementsByTagName(t).length > 0
@@ -528,24 +537,35 @@ function readImage(el: El, ctx: Ctx): JSONContent | null {
     else if (al === 'right' || al === 'outside') align = 'right'
     else if (al === 'center') align = 'center'
     else if (posH) {
-      // Absolute offset: pick the nearest side of the column.
+      // Absolute offset: kept exactly when measured from the column / margin (as we export it),
+      // i.e. from the left; otherwise the nearest side of the column.
       const off = Number(posH.getElementsByTagName('wp:posOffset')[0]?.textContent || 0) / 9525
-      align = off < 40 ? 'left' : 'right'
-      // Keep the exact spot when it's measured from the column / margin (as we export it).
       const rel = posH.getAttribute('relativeFrom')
       if ((rel === 'column' || rel === 'margin') && off >= 0) x = Math.round(off)
+      align = x != null || off < 40 ? 'left' : 'right'
     }
     if (wrap === 'square' && align === 'center') align = 'left'
-    // Vertical offset below the anchor paragraph (as we export it) → our free vertical spot.
+    // A one-sided square wrap names the side the text is on; the picture is on the other.
+    const wrapText = anchor.getElementsByTagName('wp:wrapSquare')[0]?.getAttribute('wrapText')
+    if (wrap === 'square' && wrapText === 'left') align = 'right'
+    else if (wrap === 'square' && wrapText === 'right') align = 'left'
+    else if (wrap === 'square' && x != null) sideByPosition = true
+    // Vertical offset below the anchor's line or paragraph → our free vertical spot (measured from
+    // the anchor line; a paragraph-relative picture is moved to the paragraph's start by the caller).
     const posV = anchor.getElementsByTagName('wp:positionV')[0]
-    if (posV?.getAttribute('relativeFrom') === 'paragraph') {
-      const off = Number(posV.getElementsByTagName('wp:posOffset')[0]?.textContent || 0) / 9525
-      if (off >= 4) y = Math.round(off)
+    const relV = posV?.getAttribute('relativeFrom')
+    if (relV === 'paragraph' || relV === 'line') {
+      const off = Number(posV!.getElementsByTagName('wp:posOffset')[0]?.textContent || 0) / 9525
+      if (off >= MIN_Y) y = Math.round(off)
     }
+    paragraphRelative = relV !== 'line'
   }
   const docPr = el.getElementsByTagName('wp:docPr')[0]
   const alt = docPr?.getAttribute('descr') || docPr?.getAttribute('title') || null
-  return { type: 'image', attrs: { src, alt, title: null, width, height, wrap, align, x, y } }
+  const node: JSONContent = { type: 'image', attrs: { src, alt, title: null, width, height, wrap, align, x, y } }
+  if (paragraphRelative) ctx.paragraphAnchored.add(node)
+  if (sideByPosition) ctx.sideByPosition.add(node)
+  return node
 }
 
 function readTable(tbl: El, ctx: Ctx): JSONContent {
@@ -572,7 +592,7 @@ function readTable(tbl: El, ctx: Ctx): JSONContent {
       const shdEl = child(tcPr, 'w:shd')
       const fill = attr(shdEl, 'w:fill')
       let bg = (shdEl && themeLinked(shdEl, 'Fill', ctx.theme)) ?? (fill && fill !== 'auto' ? `#${fill.toLowerCase()}` : null)
-      // Header rows written by Grafi carry the default header fill (Accent 1, Lighter 88%): leave it to the theme.
+      // Header rows written by Graphi carry the default header fill (Accent 1, Lighter 88%): leave it to the theme.
       if (isHeader && parseThemeRef(bg)?.slot === 'accent1' && parseThemeRef(bg)?.pct === 88) bg = null
       const va = val(child(tcPr, 'w:vAlign'))
       const widths = grid.slice(col, col + span)
@@ -801,6 +821,8 @@ export async function importDocx(data: Uint8Array): Promise<ImportResult> {
     rels,
     media: new Map(),
     warnings: new Set(),
+    paragraphAnchored: new WeakSet(),
+    sideByPosition: new Set(),
   }
   await loadMedia(ctx, 'word/document.xml', rels)
 
@@ -852,6 +874,8 @@ export async function importDocx(data: Uint8Array): Promise<ImportResult> {
   }
 
   if (ctx.headingNumbers) s.headingNumbers = true
+  const textWidth = mmToPx(s.width - s.margins.left - s.margins.right)
+  for (const n of ctx.sideByPosition) n.attrs!.align = squareSide(n.attrs!.x, n.attrs!.width ?? 0, textWidth)
   // The document keeps its Word theme (colours + fonts); styles and theme-coloured text follow it.
   if (theme.doc) s.theme = theme.doc
   return {

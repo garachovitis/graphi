@@ -1,4 +1,4 @@
-/* Grafi — application chrome. Brand primary #1AB3AC; the scale below is derived from it.
+/* Graphi — application chrome. Brand primary #1AB3AC; the scale below is derived from it.
    The document itself is styled by model/docCss.ts. (Variable names kept as --teal-* for brevity.) */
 :root {
   --primary: #1ab3ac;
@@ -295,39 +295,6 @@ input, select, textarea { font: inherit; color: var(--text); }
 .fb-text { height: 28px; border: 1px solid var(--border-strong); background: var(--panel); border-radius: 5px; padding: 0 10px; cursor: pointer; white-space: nowrap; }
 .fb-text:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 
-/* ───────── dictation ───────── */
-.dict-bar { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px);
-  background: var(--panel); border: 1px solid var(--border-strong); border-radius: 999px; box-shadow: var(--shadow); padding: 5px 6px 5px 8px; }
-.dict-bar.consent, .dict-bar.error { border-radius: 12px; padding: 8px 8px 8px 12px; }
-.dict-bar.error { border-color: #d9822b; }
-.dict-msg { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 12.5px; }
-.dict-msg small { color: var(--muted); font-size: 11.5px; }
-.dict-icon { color: var(--accent); flex: 0 0 auto; }
-.dict-meter { --level: 0; position: relative; flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); background: var(--hover); }
-.dict-bar.live .dict-meter { color: #fff; background: var(--primary); box-shadow: 0 0 0 calc(var(--level) * 9px) color-mix(in srgb, var(--primary) 30%, transparent); transition: box-shadow 60ms linear; }
-.dict-progress { display: block; width: 180px; height: 4px; border-radius: 2px; background: var(--hover); overflow: hidden; }
-.dict-progress i { display: block; height: 100%; background: var(--primary); transition: width 200ms; }
-.dict-lang { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; }
-.dict-btn { width: 30px; height: 30px; border-radius: 50%; border: 1px solid transparent; background: transparent; cursor: pointer; display: inline-grid; place-items: center; color: var(--text); }
-.dict-btn:hover:not(:disabled) { background: var(--hover); }
-.dict-btn.on { background: var(--pressed); color: var(--accent-strong); }
-.dict-btn.stop { color: #fff; background: #d64545; }
-.dict-btn.stop:hover:not(:disabled) { background: #b83232; }
-.dict-btn:disabled { opacity: .5; }
-.dict-text { height: 28px; border: 1px solid var(--border-strong); background: var(--panel); border-radius: 6px; padding: 0 12px; cursor: pointer; white-space: nowrap; }
-.dict-text.primary { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 600; }
-.dict-text:hover { filter: brightness(1.06); }
-.dict-help { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: 280px; background: var(--panel); border: 1px solid var(--border-strong);
-  border-radius: 10px; box-shadow: var(--shadow); padding: 8px 10px; }
-.dict-help.inline { position: static; transform: none; width: auto; min-width: 250px; border: none; box-shadow: none; padding: 0 10px 6px; background: transparent; }
-.dict-help-title { font-weight: 600; margin-bottom: 4px; }
-.dict-help-row { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; font-size: 12px; color: var(--muted); }
-.dict-help-row b { color: var(--text); font-family: Georgia, serif; min-width: 24px; text-align: center; }
-/* Words still being recognised, at the caret (a decoration on the paper, not document text). */
-.dictation-interim { color: #6b8584; background: rgba(26, 179, 172, .12); border-bottom: 1px dashed #1ab3ac; }
-.pdf-capture .dict-bar, .pdf-capture .dictation-interim { display: none !important; }
-@media print { .dictation-interim { display: none; } }
-
 /* ───────── status bar ───────── */
 .statusbar { flex: 0 0 auto; height: 26px; display: flex; align-items: center; justify-content: space-between; background: var(--primary); font-weight: 600; text-shadow: 0 1px 1px rgba(6, 47, 45, .35); color: #e6fffb; padding: 0 8px; font-size: 12px; user-select: none; }
 .sb-left, .sb-right { display: flex; align-items: center; gap: 2px; }
@@ -414,6 +381,64 @@ button.sb-item:hover, .sb-icon:hover { background: rgba(255,255,255,.14); }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
 .btn.primary { background: var(--teal-700); border-color: var(--teal-700); color: #fff; }
 .btn.primary:hover { background: var(--teal-800); color: #fff; }
+
+/* ───────── first-launch welcome ───────── */
+.welcome-backdrop { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 20px;
+  background: rgba(4, 30, 28, .58); backdrop-filter: blur(7px); animation: fade .22s ease-out; }
+.welcome-dialog { position: relative; display: grid; grid-template-columns: minmax(230px, .78fr) minmax(360px, 1.22fr); width: min(840px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px); overflow: auto; border: 1px solid color-mix(in srgb, var(--primary) 32%, var(--border)); border-radius: 24px;
+  background: var(--panel); color: var(--text); box-shadow: 0 32px 90px rgba(0,0,0,.4); animation: welcome-rise .32s cubic-bezier(.2,.8,.2,1); }
+@keyframes welcome-rise { from { opacity: 0; transform: translateY(14px) scale(.98) } }
+.welcome-x { position: absolute; z-index: 2; top: 14px; right: 14px; display: grid; place-items: center; width: 34px; height: 34px;
+  padding: 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--panel) 78%, transparent); color: var(--muted); cursor: pointer; }
+.welcome-x:hover { background: var(--hover); color: var(--text); }
+.welcome-art { position: relative; min-height: 470px; overflow: hidden; display: grid; place-items: center;
+  background: linear-gradient(145deg, var(--teal-950), var(--teal-700) 55%, var(--primary)); isolation: isolate; }
+.welcome-art::before { content: ''; position: absolute; inset: 0; opacity: .16;
+  background-image: linear-gradient(rgba(255,255,255,.35) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.35) 1px, transparent 1px);
+  background-size: 30px 30px; transform: perspective(400px) rotate(-9deg) scale(1.2); }
+.welcome-orb { position: absolute; border-radius: 50%; filter: blur(1px); background: rgba(255,255,255,.13); }
+.orb-one { width: 240px; height: 240px; left: -90px; top: -55px; }
+.orb-two { width: 190px; height: 190px; right: -75px; bottom: -45px; }
+.welcome-logo { position: relative; z-index: 1; width: 126px; height: 126px; display: grid; place-items: center; border-radius: 31px;
+  background: #fff; box-shadow: 0 24px 50px rgba(2, 35, 33, .35), inset 0 0 0 1px rgba(6,47,45,.08); transform: rotate(-3deg); }
+.welcome-logo img { width: 96px; height: 96px; object-fit: contain; }
+.welcome-card { position: absolute; z-index: 1; display: grid; place-items: center; width: 58px; height: 58px; border-radius: 18px;
+  background: rgba(255,255,255,.96); color: var(--teal-700); box-shadow: 0 14px 32px rgba(3,41,39,.28); }
+.card-one { left: 12%; top: 19%; transform: rotate(-9deg); }
+.card-two { right: 11%; bottom: 18%; transform: rotate(8deg); color: #b45309; }
+.welcome-content { display: flex; flex-direction: column; justify-content: center; padding: 58px 54px 46px; }
+.welcome-kicker { display: inline-flex; align-items: center; align-self: flex-start; gap: 6px; margin-bottom: 14px; padding: 6px 10px; border-radius: 999px;
+  background: var(--teal-100); color: var(--teal-800); font-size: 12px; font-weight: 800; letter-spacing: .035em; text-transform: uppercase; }
+.welcome-content h1 { margin: 0; max-width: 520px; font-size: clamp(26px, 3.4vw, 36px); line-height: 1.1; letter-spacing: -.02em; }
+.welcome-copy { margin: 18px 0 16px; color: var(--muted); font-size: 15px; line-height: 1.62; }
+.welcome-actions { display: flex; flex-direction: column; align-items: stretch; gap: 9px; }
+.welcome-primary, .welcome-secondary { min-height: 44px; border-radius: 11px; padding: 0 17px; font-weight: 750; cursor: pointer; }
+.welcome-primary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; border: 1px solid var(--teal-700); background: var(--teal-700); color: #fff;
+  box-shadow: 0 8px 20px rgba(17,116,112,.25); }
+.welcome-primary svg:last-child { margin-left: 3px; transition: transform .15s ease; }
+.welcome-primary:hover { background: var(--teal-800); border-color: var(--teal-800); }
+.welcome-primary:hover svg:last-child { transform: translateX(3px); }
+.welcome-secondary { border: 1px solid var(--border-strong); background: transparent; color: var(--muted); }
+.welcome-secondary:hover { border-color: var(--accent); color: var(--accent); background: var(--hover); }
+.welcome-primary:focus-visible, .welcome-secondary:focus-visible, .welcome-x:focus-visible { outline: 3px solid color-mix(in srgb, var(--primary) 38%, transparent); outline-offset: 2px; }
+.welcome-hint { margin-top: 14px; color: var(--muted); font-size: 11.5px; }
+@media (max-width: 680px) {
+  .welcome-backdrop { padding: 8px; }
+  .welcome-dialog { display: block; width: calc(100vw - 16px); max-height: calc(100vh - 16px); border-radius: 18px; }
+  .welcome-art { min-height: 150px; }
+  .welcome-logo { width: 82px; height: 82px; border-radius: 22px; }
+  .welcome-logo img { width: 62px; height: 62px; }
+  .welcome-card { width: 43px; height: 43px; border-radius: 13px; }
+  .card-one { left: 18%; top: 20%; } .card-two { right: 17%; bottom: 16%; }
+  .welcome-content { padding: 28px 24px 25px; }
+  .welcome-content h1 { font-size: 25px; }
+  .welcome-copy { margin-top: 13px; }
+  .welcome-actions { align-items: stretch; flex-direction: column; }
+  .welcome-primary { justify-content: center; }
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .welcome-kicker { background: var(--pressed); color: var(--teal-200); } }
+:root[data-theme="dark"] .welcome-kicker { background: var(--pressed); color: var(--teal-200); }
 .err { color: #b42318; font-size: 12px; }
 fieldset { border: 1px solid var(--border); border-radius: 7px; padding: 8px 12px 10px; margin: 0; }
 legend { font-size: 12px; font-weight: 600; color: var(--accent-strong); padding: 0 4px; }

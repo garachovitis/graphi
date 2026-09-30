@@ -57,7 +57,7 @@ function verify() {
     const r = document.createRange(); r.selectNodeContents(t)
     for (const rc of r.getClientRects()) check(y(rc.top), y(rc.bottom), t.textContent!.slice(0, 24))
   }
-  for (const img of pm.querySelectorAll('img')) { const r = img.getBoundingClientRect(); check(y(r.top), y(r.bottom), 'IMG') }
+  for (const img of pm.querySelectorAll('img:not(.ProseMirror-separator)')) { const r = img.getBoundingClientRect(); check(y(r.top), y(r.bottom), 'IMG') }
   const orphanHeadings: string[] = []
   for (const h of pm.querySelectorAll('h1,h2,h3')) {
     const next = h.nextElementSibling; if (!next) continue

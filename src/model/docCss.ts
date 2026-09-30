@@ -30,7 +30,14 @@ ${S} blockquote{margin:10pt 0 8pt;padding:0 0 0 12pt;border-left:3px solid var(-
 ${S} blockquote p{margin-bottom:4pt}
 ${S} hr{border:none;border-top:1px solid #a6b5b5;margin:0;padding:6pt 0 0;height:7pt;box-sizing:content-box}
 ${S} img{max-width:100%;vertical-align:bottom}
-${S} p:has(> [data-wrap]),${S} p:has(> .wpic[data-wrap]){display:flow-root}
+/* A wrapped picture is anchored in its paragraph but, like in Word, text of the following paragraphs
+   wraps around it too — so the paragraph must not contain it (no flow-root / BFC).
+   ProseMirror's caret helpers around a picture (separator <img>, trailing <br>) are inline: next to a
+   top-and-bottom picture, which is a block, each would make an empty line of its own, and a
+   trailing <br> would add one under any wrapped picture that ends its paragraph. */
+${S} img.ProseMirror-separator:has(+ .wpic[data-wrap="topBottom"]),${S} .wpic[data-wrap="topBottom"] + img.ProseMirror-separator{display:none !important}
+${S} .wpic[data-wrap] + .ProseMirror-separator + .ProseMirror-trailingBreak{display:none}
+${S} .wpic.lifted{display:none !important}
 ${S} ul,${S} ol{margin:0 0 0 0;padding-left:0.5in}
 ${S} li{margin:0}
 ${S} li > p{margin-top:0;margin-bottom:0}

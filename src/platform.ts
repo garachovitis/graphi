@@ -8,6 +8,7 @@ import { t, type Key } from './i18n'
 export interface OpenedFile { path: string | null; name: string; data: Uint8Array }
 export interface SaveOpts { filePath?: string | null; suggestedName: string; kind: string; data: Uint8Array; askPath?: boolean }
 export interface SavedFile { path: string | null; name: string }
+export interface FetchedImage { data: Uint8Array; type: string }
 
 interface NativeBridge {
   platform: string
@@ -26,6 +27,7 @@ interface NativeBridge {
   showError(m: string): Promise<void>
   recent(): Promise<string[]>
   openExternal(u: string): Promise<void>
+  fetchImage(u: string): Promise<FetchedImage>
   reveal(p: string): Promise<void>
   onMenu(cb: (cmd: string) => void): () => void
   onFileOpened(cb: (f: OpenedFile) => void): () => void
@@ -164,7 +166,7 @@ async function fsaSave(o: SaveOpts): Promise<SavedFile | null> {
   return { path, name: h.name }
 }
 
-/** Files handed to an installed PWA by the OS ("Open with Grafi"). */
+/** Files handed to an installed PWA by the OS ("Open with Graphi"). */
 export function onLaunchFiles(cb: (f: OpenedFile) => void) {
   const lq = (window as any).launchQueue
   if (!lq) return
@@ -259,6 +261,18 @@ export const platform = {
   error: async (m: string) => (native ? native.showError(m) : alert(m)),
   recent: async (): Promise<string[]> => (native ? native.recent() : []),
   openExternal: (u: string) => (native ? native.openExternal(u) : window.open(u, '_blank', 'noopener')),
+  /**
+   * Insert ▸ Pictures ▸ From a URL — the one place Graphi goes online, and only for an address the
+   * user typed. On desktop the main process downloads it (the renderer has no network at all).
+   */
+  fetchImage: async (u: string): Promise<FetchedImage> => {
+    if (native) return native.fetchImage(u)
+    if (!/^https?:\/\//i.test(u)) throw new Error(t('dlg.notImage'))
+    const res = await fetch(u, { credentials: 'omit', referrerPolicy: 'no-referrer' })
+    if (!res.ok) throw new Error(String(res.status))
+    const blob = await res.blob()
+    return { data: new Uint8Array(await blob.arrayBuffer()), type: blob.type }
+  },
   reveal: (p: string) => native?.reveal(p),
   onMenu: (cb: (cmd: string) => void) => native?.onMenu(cb) ?? (() => {}),
   onFileOpened: (cb: (f: OpenedFile) => void) => native?.onFileOpened(cb) ?? (() => {}),

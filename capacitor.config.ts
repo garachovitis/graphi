@@ -2,7 +2,7 @@ import type { CapacitorConfig } from '@capacitor/cli'
 
 const config: CapacitorConfig = {
   appId: 'com.grafi.app',
-  appName: 'Grafi',
+  appName: 'Graphi',
   webDir: 'dist',
   backgroundColor: '#1ab3ac',
   ios: { contentInset: 'never', scrollEnabled: false, limitsNavigationsToAppBoundDomains: false },

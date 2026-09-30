@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
-	<string>Grafi</string>
+	<string>Graphi</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -26,10 +26,6 @@
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Το Grafi χρησιμοποιεί το μικρόφωνο για την Υπαγόρευση.</string>
-	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Το Grafi μετατρέπει την ομιλία σας σε κείμενο για την Υπαγόρευση.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

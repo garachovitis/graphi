@@ -9,7 +9,8 @@ import { fontSizeToPt, colorHex } from '../editor/units'
 import { tableHeaderFill } from '../model/docCss'
 import { captionNumbers, collectHeadingsJson, escapeXml, escapeHtml } from './common'
 import { bytesToDataUrl } from './images'
-import { pictureAttrs, pictureKey, preparePictures } from './pictures'
+import { anchoredAtStart, pictureAttrs, pictureKey, preparePictures } from './pictures'
+import { MIN_Y, TEXT_DISTANCE } from '../editor/image'
 import { t, fmtDate } from '../i18n'
 
 const NS = [
@@ -106,7 +107,8 @@ interface Ctx {
 
 function inlineXml(n: JSONContent, ctx: Ctx): string {
   let out = ''
-  for (const c of n.content || []) {
+  const inline = n.content || []
+  inline.forEach((c, index) => {
     let x = ''
     if (c.type === 'text') {
       const props = textProps(c.marks?.filter((m) => m.type !== 'link'), ctx.auto.fonts)
@@ -120,9 +122,16 @@ function inlineXml(n: JSONContent, ctx: Ctx): string {
         let style = 'fr1'
         let anchor = 'as-char'
         if (a.wrap) {
-          anchor = 'paragraph'
+          // At the paragraph's start our line-relative `y` is paragraph-relative; further in, the
+          // frame is anchored to its character and measured from it (≈ the top of its line).
+          const atStart = anchoredAtStart(inline, index)
+          anchor = atStart ? 'paragraph' : 'char'
+          const d = TEXT_DISTANCE[a.wrap]
+          const pt = (px: number) => `${((px * 72) / 96).toFixed(2)}pt`
           const hpos = a.x != null ? 'from-left' : a.wrap === 'square' ? (a.align === 'right' ? 'right' : 'left') : a.align === 'left' ? 'left' : a.align === 'right' ? 'right' : 'center'
-          style = ctx.auto.get('graphic', 'fr', `<style:graphic-properties style:wrap="${a.wrap === 'square' ? 'parallel' : 'none'}" style:number-wrapped-paragraphs="no-limit" style:horizontal-pos="${hpos}" style:horizontal-rel="paragraph" style:vertical-pos="${a.y ? 'from-top' : 'top'}" style:vertical-rel="paragraph" fo:margin-top="8pt" fo:margin-bottom="8pt" fo:margin-left="8pt" fo:margin-right="8pt" fo:border="none"/>`, 'Graphics')
+          // Square: text on one side, as in Grafi — left of a right-hand picture, right of a left-hand one.
+          const wrap = a.wrap === 'topBottom' ? 'none' : a.align === 'right' ? 'left' : 'right'
+          style = ctx.auto.get('graphic', 'fr', `<style:graphic-properties style:wrap="${wrap}" style:number-wrapped-paragraphs="no-limit" style:horizontal-pos="${hpos}" style:horizontal-rel="paragraph" style:vertical-pos="${a.y ? 'from-top' : 'top'}" style:vertical-rel="${atStart ? 'paragraph' : 'char'}" fo:margin-top="${pt(d.top)}" fo:margin-bottom="${pt(d.bottom)}" fo:margin-left="${pt(d.side)}" fo:margin-right="${pt(d.side)}" fo:border="none"/>`, 'Graphics')
         }
         x = `<draw:frame draw:style-name="${style}" text:anchor-type="${anchor}"${a.wrap && a.x != null ? ` svg:x="${mm(a.x)}"` : ''}${a.wrap && a.y ? ` svg:y="${mm(a.y)}"` : ''} svg:width="${mm(pic.w)}" svg:height="${mm(pic.h)}" draw:z-index="0"><draw:image xlink:href="${pic.path}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad" draw:mime-type="${pic.mime}"/>${a.alt ? `<svg:desc>${escapeXml(a.alt)}</svg:desc>` : ''}</draw:frame>`
       }
@@ -130,7 +139,7 @@ function inlineXml(n: JSONContent, ctx: Ctx): string {
     const link = c.marks?.find((m) => m.type === 'link')
     if (link) x = `<text:a xlink:type="simple" xlink:href="${escapeXml(link.attrs?.href || '')}">${x}</text:a>`
     out += x
-  }
+  })
   return out
 }
 
@@ -357,7 +366,7 @@ ${[1, 2, 3, 4, 5, 6].map((l) => `<style:style style:name="Contents_20_${l}" styl
 </office:document-styles>`
 
   const meta = `<?xml version="1.0" encoding="UTF-8"?>
-<office:document-meta ${NS} office:version="1.3"><office:meta><meta:generator>Grafi</meta:generator>${settings.title ? `<dc:title>${escapeXml(settings.title)}</dc:title>` : ''}${settings.author ? `<meta:initial-creator>${escapeXml(settings.author)}</meta:initial-creator><dc:creator>${escapeXml(settings.author)}</dc:creator>` : ''}<meta:creation-date>${new Date().toISOString().slice(0, 19)}</meta:creation-date><dc:date>${new Date().toISOString().slice(0, 19)}</dc:date></office:meta></office:document-meta>`
+<office:document-meta ${NS} office:version="1.3"><office:meta><meta:generator>Graphi</meta:generator>${settings.title ? `<dc:title>${escapeXml(settings.title)}</dc:title>` : ''}${settings.author ? `<meta:initial-creator>${escapeXml(settings.author)}</meta:initial-creator><dc:creator>${escapeXml(settings.author)}</dc:creator>` : ''}<meta:creation-date>${new Date().toISOString().slice(0, 19)}</meta:creation-date><dc:date>${new Date().toISOString().slice(0, 19)}</dc:date></office:meta></office:document-meta>`
 
   const manifest = `<?xml version="1.0" encoding="UTF-8"?>
 <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.3">
@@ -484,7 +493,9 @@ export async function importOdt(data: Uint8Array): Promise<{ html: string; setti
     return kind === 'p' ? [paraCss(s.p), textCss(s.t, fonts)].filter(Boolean).join(';') : textCss(s.t, fonts)
   }
 
-  const inline = (el: Element): string => {
+  // `hoisted` collects paragraph-anchored frames: their offset is from the paragraph's top, which is
+  // what our line-relative `y` means only at the paragraph's start (see pictures.ts → anchoredAtStart).
+  const inline = (el: Element, hoisted: string[]): string => {
     let out = ''
     for (const n of Array.from(el.childNodes)) {
       if (n.nodeType === 3) { out += escapeHtml(n.textContent || ''); continue }
@@ -495,13 +506,13 @@ export async function importOdt(data: Uint8Array): Promise<{ html: string; setti
           const css = directCss(e.getAttribute('text:style-name'), 't')
           const s = styles.get(e.getAttribute('text:style-name') || '')
           const pos = s?.t['style:text-position'] || ''
-          let inner = inline(e)
+          let inner = inline(e, hoisted)
           if (pos.startsWith('super')) inner = `<sup>${inner}</sup>`
           else if (pos.startsWith('sub')) inner = `<sub>${inner}</sub>`
           out += css ? `<span style="${escapeHtml(css)}">${inner}</span>` : inner
           break
         }
-        case 'text:a': out += `<a href="${escapeHtml(e.getAttribute('xlink:href') || '')}">${inline(e)}</a>`; break
+        case 'text:a': out += `<a href="${escapeHtml(e.getAttribute('xlink:href') || '')}">${inline(e, hoisted)}</a>`; break
         case 'text:s': out += ' '.repeat(Number(e.getAttribute('text:c') || 1)); break
         case 'text:tab': out += '\t'; break
         case 'text:line-break': out += '<br>'; break
@@ -523,15 +534,19 @@ export async function importOdt(data: Uint8Array): Promise<{ html: string; setti
           const anchorType = e.getAttribute('text:anchor-type')
           const wrap = anchorType === 'as-char' || (anchorType === 'char' && !wrapAttr) ? '' : wrapAttr === 'none' ? 'topBottom' : wrapAttr ? 'square' : ''
           const hpos = gp?.getAttribute('style:horizontal-pos')
-          const align = hpos === 'left' || hpos === 'from-left' ? 'left' : hpos === 'right' ? 'right' : wrap === 'square' ? 'left' : 'center'
-          if (src) out += `<img src="${src}"${cm(e.getAttribute('svg:width')) ? ` width="${cm(e.getAttribute('svg:width'))}"` : ''}${cm(e.getAttribute('svg:height')) ? ` height="${cm(e.getAttribute('svg:height'))}"` : ''}${wrap ? ` data-wrap="${wrap}" data-align="${align}"` : ''}${wrap && hpos === 'from-left' && cm(e.getAttribute('svg:x')) != null ? ` data-x="${cm(e.getAttribute('svg:x'))}"` : ''}${wrap && gp?.getAttribute('style:vertical-pos') === 'from-top' && (cm(e.getAttribute('svg:y')) ?? 0) >= 4 ? ` data-y="${cm(e.getAttribute('svg:y'))}"` : ''}>`
+          // A one-sided wrap names the side the text is on; the picture is on the other.
+          const align = wrap === 'square' && wrapAttr === 'left' ? 'right' : wrap === 'square' && wrapAttr === 'right' ? 'left'
+            : hpos === 'left' || hpos === 'from-left' ? 'left' : hpos === 'right' ? 'right' : wrap === 'square' ? 'left' : 'center'
+          const html = src && `<img src="${src}"${cm(e.getAttribute('svg:width')) ? ` width="${cm(e.getAttribute('svg:width'))}"` : ''}${cm(e.getAttribute('svg:height')) ? ` height="${cm(e.getAttribute('svg:height'))}"` : ''}${wrap ? ` data-wrap="${wrap}" data-align="${align}"` : ''}${wrap && hpos === 'from-left' && cm(e.getAttribute('svg:x')) != null ? ` data-x="${cm(e.getAttribute('svg:x'))}"` : ''}${wrap && gp?.getAttribute('style:vertical-pos') === 'from-top' && (cm(e.getAttribute('svg:y')) ?? 0) >= MIN_Y ? ` data-y="${cm(e.getAttribute('svg:y'))}"` : ''}>`
+          if (html && wrap && anchorType === 'paragraph') hoisted.push(html)
+          else if (html) out += html
           else if (img) warnings.add(t('io.odtImages'))
           break
         }
         case 'text:note': break
         case 'text:number': break // cached outline number; we regenerate numbering
         case 'text:bookmark': case 'text:bookmark-start': case 'text:bookmark-end': break
-        default: out += inline(e)
+        default: out += inline(e, hoisted)
       }
     }
     return out
@@ -562,12 +577,14 @@ export async function importOdt(data: Uint8Array): Promise<{ html: string; setti
           const sem = n.tagName === 'text:h' ? `h${Math.min(6, Number(n.getAttribute('text:outline-level') || 1))}` : semantic(sn)
           const css = directCss(sn, 'p')
           const style = css ? ` style="${escapeHtml(css)}"` : ''
-          let body = inline(n)
+          const hoisted: string[] = []
+          let body = inline(n, hoisted)
           let capAttr = ''
           if (sem === 'Caption') {
             const m = CAP_RE.exec(body)
             if (m) { body = body.slice(m[0].length); capAttr = ` data-caption="${m[2] ? 'table' : 'figure'}"` }
           }
+          body = hoisted.join('') + body
           if (sem && sem.startsWith('h')) out += `<${sem}${style}>${body}</${sem}>`
           else if (capAttr) out += `<p${style} data-style="Caption"${capAttr}>${body}</p>`
           else out += `<p${style}${sem ? ` data-style="${sem}"` : ''}>${body}</p>`

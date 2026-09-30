@@ -20,6 +20,18 @@ const DEFAULTS: Omit<ImgAttrs, 'src'> = {
 
 export const pictureAttrs = (n: JSONContent): ImgAttrs => ({ ...DEFAULTS, ...(n.attrs || {}) } as ImgAttrs)
 
+/**
+ * A wrapped picture's `y` is measured from the line it is anchored on. When nothing but other
+ * wrapped pictures precedes it, that line is the paragraph's first, so `y` is paragraph-relative
+ * too — the position Word and LibreOffice use by default.
+ */
+export const anchoredAtStart = (inline: JSONContent[], index: number) =>
+  inline.slice(0, index).every((c) => c.type === 'image' && c.attrs?.wrap)
+
+/** Moves the given (paragraph-anchored) pictures to the start of their paragraph, keeping their order. */
+export const hoistToStart = (inline: JSONContent[], anchored: (n: JSONContent) => boolean) =>
+  [...inline.filter(anchored), ...inline.filter((n) => !anchored(n))]
+
 /** FNV-1a over the whole source, memoised: pictures are often megabytes of base64. */
 const hashes = new Map<string, string>()
 function srcHash(src: string) {

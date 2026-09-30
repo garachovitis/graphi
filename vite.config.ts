@@ -8,7 +8,21 @@ import { fileURLToPath } from 'node:url'
 const ROOT = dirname(fileURLToPath(import.meta.url))
 
 // Strict CSP for the packaged app only (the dev server needs inline HMR scripts).
-const CSP = "default-src 'self'; img-src 'self' data: blob: https: http:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self' https: http:"
+// Graphi never talks to a server: everything is the app's own or embedded in the document, so no
+// remote script, style, font or image is allowed. `connect-src https:` exists only for Insert ▸
+// Pictures ▸ From a URL on web / mobile (an address the user types); Electron downloads that
+// picture in the main process and blocks all renderer traffic anyway.
+const CSP = [
+  "default-src 'self'",
+  "img-src 'self' data: blob:",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self' data:",
+  "script-src 'self'",
+  "connect-src 'self' https:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'none'",
+].join('; ')
 const csp = () => ({
   name: 'grafi-csp',
   apply: 'build' as const,

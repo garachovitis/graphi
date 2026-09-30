@@ -37,14 +37,6 @@
 
     <!-- Permissions -->
 
+    <!-- The Capacitor WebView expects it; Graphi itself never goes online (the page's CSP only allows 'self'). -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Home ▸ Dictate -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
-
-    <!-- Android 11+: lets SpeechRecognizer find the system recognition service -->
-    <queries>
-        <intent>
-            <action android:name="android.speech.RecognitionService" />
-        </intent>
-    </queries>
 </manifest>

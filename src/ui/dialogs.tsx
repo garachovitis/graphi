@@ -9,7 +9,7 @@ import { FONT_CHOICES, fontHint, fontLabel, fontStack } from '../model/styles'
 import { currentFontFamily, currentFontSizePt, currentStyle, FONT_SIZES } from '../editor/format'
 import { layoutStore } from '../editor/layoutStore'
 import { countWords } from './StatusBar'
-import { modKey } from '../platform'
+import { modKey, platform } from '../platform'
 import { PAGE_GAP } from './Canvas'
 import { parseLocale, ColorWell } from './controls'
 import { resolveColor } from '../model/themes'
@@ -409,11 +409,9 @@ function ImageUrlDlg({ api, close }: { api: AppApi; close: () => void }) {
   const [err, setErr] = useState('')
   const ok = async () => {
     try {
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(String(res.status))
-      const blob = await res.blob()
-      if (!blob.type.startsWith('image/')) throw new Error(t('dlg.notImage'))
-      api.insertImageFiles([new File([blob], url.split('/').pop() || 'image', { type: blob.type })])
+      const { data, type } = await platform.fetchImage(url.trim())
+      if (!type.startsWith('image/')) throw new Error(t('dlg.notImage'))
+      api.insertImageFiles([new File([data as BlobPart], url.split('/').pop() || 'image', { type })])
       close()
     } catch (e: any) {
       setErr(t('dlg.imageFetchFailed', { error: String(e?.message || e) }))

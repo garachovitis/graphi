@@ -16,7 +16,6 @@ import { Ill } from './illustrations'
 import { ShapeGallery, insertShape, changeKind } from './ShapeTools'
 import { isLine, shapeSrc, type VShape } from '../editor/shapes'
 import { t, numText } from '../i18n'
-import { useDictation } from '../dictation'
 
 type MTab = 'home' | 'insert' | 'layout' | 'refs' | 'view' | 'table' | 'picture'
 const S = 26
@@ -117,7 +116,6 @@ function Home({ api }: { api: AppApi }) {
   const c = () => e.chain().focus()
   const st = currentStyle(e)
   const align = ['left', 'center', 'right', 'justify'].find((a) => e.isActive({ textAlign: a })) || 'left'
-  const dict = useDictation()
   return (
     <>
       <MDrop icon={<Ill name="styles" size={S} />} label={styleName(st)}>
@@ -131,7 +129,6 @@ function Home({ api }: { api: AppApi }) {
           </>
         )}
       </MDrop>
-      <MBtn icon={<Ill name={dict.phase !== 'idle' ? 'dictateOn' : 'dictate'} size={S} />} label={t('dict.dictate')} active={dict.phase !== 'idle'} onClick={() => api.run('dictate')} />
       <MBtn icon={<Ill name="bold" size={S} />} label={t('m.bold')} active={e.isActive('bold')} onClick={() => c().toggleBold().run()} />
       <MBtn icon={<Ill name="italic" size={S} />} label={t('m.italic')} active={e.isActive('italic')} onClick={() => c().toggleItalic().run()} />
       <MBtn icon={<Ill name="underline" size={S} />} label={t('m.underline')} active={e.isActive('underline')} onClick={() => c().toggleUnderline().run()} />

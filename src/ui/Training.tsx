@@ -4,7 +4,7 @@
 // shows one small step at a time, points at the exact button with a pulsing frame, checks
 // the document after every keystroke and moves on by itself. Scoring is deliberately
 // simple and encouraging: every correct step earns its full points, every finished level a
-// bonus and three stars, and the last level crowns a «Grafi Master».
+// bonus and three stars, and the last level crowns a «Graphi Master».
 // The sample pages are locked so they cannot be damaged by accident.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Editor, JSONContent } from '@tiptap/core'
@@ -728,7 +728,7 @@ export const LEVEL_BONUS = 50
 export const levelPoints = (l: Lesson) => l.steps.length * stepPoints(l) + LEVEL_BONUS
 export const totalPoints = (p: Progress) => LESSONS.reduce((a, l) => a + (p[l.id]?.points || 0), 0)
 export const isUnlocked = (p: Progress, i: number) => i === 0 || !!p[LESSONS[i - 1].id]
-/** Rank name after `n` finished levels (0 = beginner … 5 = Grafi Master). */
+/** Rank name after `n` finished levels (0 = beginner … 5 = Graphi Master). */
 export const rankName = (n: number) => t(`tr.rank${Math.min(5, Math.max(0, n))}` as Key)
 export const rankOf = (p: Progress) => rankName(LESSONS.filter((l) => p[l.id]).length)
 

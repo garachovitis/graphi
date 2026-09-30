@@ -1,6 +1,6 @@
 {
-  "name": "Grafi",
-  "short_name": "Grafi",
+  "name": "Graphi",
+  "short_name": "Graphi",
   "description": "Επεξεργαστής κειμένου συμβατός με Word (DOCX), LibreOffice (ODT) και PDF",
   "lang": "el",
   "start_url": "./",

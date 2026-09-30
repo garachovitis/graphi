@@ -1,8 +1,6 @@
 import UIKit
 import Capacitor
 import WebKit
-import Speech
-import AVFoundation
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -47,7 +45,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Grafi native printing / PDF (kept in this file so it is already part of the target).
+// Graphi native printing / PDF (kept in this file so it is already part of the target).
 // PDF/print = the on-screen page sheets captured as vector PDF and scaled to the paper
 // (exact margins; WebKit's print formatter would shrink the page). The print-formatter
 // path remains as a fallback for the web layout view.
@@ -55,7 +53,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 class MainViewController: CAPBridgeViewController {
     override open func capacitorDidLoad() {
         bridge?.registerPluginInstance(GrafiPrintPlugin())
-        bridge?.registerPluginInstance(GrafiDictationPlugin())
     }
 }
 
@@ -120,7 +117,7 @@ public class GrafiPrintPlugin: CAPPlugin, CAPBridgedPlugin {
                 let out = NSMutableData()
                 var box = CGRect(origin: .zero, size: size)
                 guard let consumer = CGDataConsumer(data: out as CFMutableData),
-                      let ctx = CGContext(consumer: consumer, mediaBox: &box, [kCGPDFContextCreator as String: "Grafi"] as CFDictionary) else { return done(nil) }
+                      let ctx = CGContext(consumer: consumer, mediaBox: &box, [kCGPDFContextCreator as String: "Graphi"] as CFDictionary) else { return done(nil) }
                 for d in pages {
                     guard let provider = CGDataProvider(data: d as CFData), let doc = CGPDFDocument(provider), let pg = doc.page(at: 1) else { continue }
                     let src = pg.getBoxRect(.mediaBox)
@@ -170,7 +167,7 @@ public class GrafiPrintPlugin: CAPPlugin, CAPBridgedPlugin {
         fmt.perPageContentInsets = UIEdgeInsets(top: 0, left: left, bottom: 0, right: right)
         r.addPrintFormatter(fmt, startingAtPageAt: 0)
         let data = NSMutableData()
-        UIGraphicsBeginPDFContextToData(data, r.paper, [kCGPDFContextCreator as String: "Grafi"])
+        UIGraphicsBeginPDFContextToData(data, r.paper, [kCGPDFContextCreator as String: "Graphi"])
         r.prepare(forDrawingPages: NSRange(location: 0, length: r.numberOfPages))
         let bounds = UIGraphicsGetPDFContextBounds()
         for i in 0..<r.numberOfPages {
@@ -190,14 +187,14 @@ public class GrafiPrintPlugin: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
-    /// Prints exactly the PDF Grafi renders (same pages as on screen) via the system print sheet.
+    /// Prints exactly the PDF Graphi renders (same pages as on screen) via the system print sheet.
     @objc func print(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             self.capturePages(call) { res in
                 guard let (data, _) = res else { return call.reject("Η δημιουργία PDF απέτυχε") }
                 let info = UIPrintInfo(dictionary: nil)
                 info.outputType = .general
-                info.jobName = call.getString("name") ?? "Grafi"
+                info.jobName = call.getString("name") ?? "Graphi"
                 let pc = UIPrintInteractionController.shared
                 pc.printInfo = info
                 pc.printingItem = data
@@ -206,152 +203,5 @@ public class GrafiPrintPlugin: CAPPlugin, CAPBridgedPlugin {
                 }
             }
         }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Grafi dictation (Home ▸ Dictate): Apple's speech recogniser, on-device where the language
-// allows it, with automatic punctuation (iOS 16+). A pause of 1.2 s closes a phrase: it is sent
-// as "final" and a fresh request starts, so there is no one-minute limit and each phrase is
-// punctuated on its own. Events: partial / final {text}, level {level 0…1}, error {code}.
-// ─────────────────────────────────────────────────────────────────────────────
-@objc(GrafiDictationPlugin)
-public class GrafiDictationPlugin: CAPPlugin, CAPBridgedPlugin {
-    public let identifier = "GrafiDictationPlugin"
-    public let jsName = "GrafiDictation"
-    public let pluginMethods: [CAPPluginMethod] = [
-        CAPPluginMethod(name: "available", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
-    ]
-
-    private let audio = AVAudioEngine()
-    private var recognizer: SFSpeechRecognizer?
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var task: SFSpeechRecognitionTask?
-    private var punctuation = true
-    private var active = false
-    private var text = ""
-    private var settle: DispatchWorkItem?
-    private var failures = 0
-    private var lastLevel = Date.distantPast
-
-    @objc func available(_ call: CAPPluginCall) {
-        let r = SFSpeechRecognizer(locale: Locale(identifier: call.getString("lang") ?? "el-GR"))
-        call.resolve(["available": r?.isAvailable ?? false, "onDevice": r?.supportsOnDeviceRecognition ?? false])
-    }
-
-    @objc func start(_ call: CAPPluginCall) {
-        let lang = call.getString("lang") ?? "el-GR"
-        punctuation = call.getBool("punctuation") ?? true
-        SFSpeechRecognizer.requestAuthorization { status in
-            guard status == .authorized else { return call.reject("permission denied") }
-            let granted: (Bool) -> Void = { ok in
-                DispatchQueue.main.async {
-                    guard ok else { return call.reject("permission denied") }
-                    do { try self.begin(lang); call.resolve() } catch { call.reject(error.localizedDescription) }
-                }
-            }
-            if #available(iOS 17, *) { AVAudioApplication.requestRecordPermission(completionHandler: granted) }
-            else { AVAudioSession.sharedInstance().requestRecordPermission(granted) }
-        }
-    }
-
-    @objc func stop(_ call: CAPPluginCall) {
-        DispatchQueue.main.async {
-            self.active = false
-            self.commit() // the words heard so far still reach the document
-            self.teardown()
-            call.resolve()
-        }
-    }
-
-    private func begin(_ lang: String) throws {
-        guard let r = SFSpeechRecognizer(locale: Locale(identifier: lang)), r.isAvailable else {
-            throw NSError(domain: "GrafiDictation", code: 1, userInfo: [NSLocalizedDescriptionKey: "language"])
-        }
-        teardown()
-        recognizer = r
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
-        try session.setActive(true, options: .notifyOthersOnDeactivation)
-        let input = audio.inputNode
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { [weak self] buf, _ in
-            self?.request?.append(buf)
-            self?.meter(buf)
-        }
-        audio.prepare()
-        try audio.start()
-        active = true
-        failures = 0
-        newRequest()
-    }
-
-    private func newRequest() {
-        guard let r = recognizer else { return }
-        let req = SFSpeechAudioBufferRecognitionRequest()
-        req.shouldReportPartialResults = true
-        req.taskHint = .dictation
-        if #available(iOS 16, *) { req.addsPunctuation = punctuation }
-        // Private and without Apple's per-minute server limits where the language model is on the device.
-        if r.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
-        request = req
-        text = ""
-        task = r.recognitionTask(with: req) { [weak self] result, error in
-            DispatchQueue.main.async { self?.handle(req, result, error) }
-        }
-    }
-
-    private func handle(_ req: SFSpeechAudioBufferRecognitionRequest, _ result: SFSpeechRecognitionResult?, _ error: Error?) {
-        guard req === request else { return } // a phrase that was already committed
-        if let result = result {
-            failures = 0
-            text = result.bestTranscription.formattedString
-            if result.isFinal { commit(); return }
-            notifyListeners("partial", data: ["text": text])
-            settle?.cancel()
-            let w = DispatchWorkItem { [weak self] in self?.commit() }
-            settle = w
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: w)
-        } else if error != nil {
-            if !text.isEmpty { commit(); return }
-            guard active else { return }
-            // "No speech detected" and similar end a request; keep listening unless it keeps failing.
-            failures += 1
-            if failures > 8 { active = false; teardown(); notifyListeners("error", data: ["code": "failed"]); return }
-            request = nil
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in if self?.active == true { self?.newRequest() } }
-        }
-    }
-
-    private func commit() {
-        settle?.cancel(); settle = nil
-        let phrase = text
-        text = ""
-        request?.endAudio(); task?.cancel()
-        request = nil; task = nil
-        if !phrase.isEmpty { notifyListeners("final", data: ["text": phrase]) }
-        if active { newRequest() }
-    }
-
-    private func teardown() {
-        settle?.cancel(); settle = nil
-        if audio.isRunning { audio.stop() }
-        audio.inputNode.removeTap(onBus: 0)
-        request?.endAudio(); task?.cancel()
-        request = nil; task = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    }
-
-    private func meter(_ buf: AVAudioPCMBuffer) {
-        let now = Date()
-        guard now.timeIntervalSince(lastLevel) > 0.066, let ch = buf.floatChannelData?[0], buf.frameLength > 0 else { return }
-        lastLevel = now
-        var sum: Float = 0
-        for i in 0..<Int(buf.frameLength) { sum += ch[i] * ch[i] }
-        let db = 20 * log10(sqrt(sum / Float(buf.frameLength)) + 1e-9)
-        let level = max(0, min(1, (db + 60) / 50))
-        DispatchQueue.main.async { self.notifyListeners("level", data: ["level": level]) }
     }
 }

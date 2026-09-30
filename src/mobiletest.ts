@@ -16,7 +16,7 @@ export async function maybeRunSelftest() {
     if (i % 6 === 0) content.push({ type: 'heading', attrs: { level: 1 + (i % 3) }, content: [{ type: 'text', text: 'Ενότητα ' + (i / 6 + 1) }] })
     content.push({ type: 'paragraph', attrs: { textAlign: i % 2 ? 'justify' : null }, content: [{ type: 'text', text: P.repeat(1 + (i % 4)) }] })
   }
-  setSettings({ ...settings, hf: { ...settings.hf, headerText: 'Grafi · iOS', headerAlign: 'right', footerText: 'Σελίδα {page} από {pages}', footerAlign: 'center' } })
+  setSettings({ ...settings, hf: { ...settings.hf, headerText: 'Graphi · iOS', headerAlign: 'right', footerText: 'Σελίδα {page} από {pages}', footerAlign: 'center' } })
   editor.commands.setContent({ type: 'doc', content })
   await new Promise((r) => setTimeout(r, 3000))
   const s = w.__grafi.settings

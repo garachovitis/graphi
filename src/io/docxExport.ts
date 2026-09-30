@@ -15,7 +15,8 @@ import { fontSizeToPt, colorHex, normalizeColor } from '../editor/units'
 import { currentTheme, parseThemeRef, type ColorRef, type Slot } from '../model/themes'
 import { HEADER_TINT } from '../model/docCss'
 import { isSectionBreak, type BreakKind } from '../editor/nodes'
-import { pictureAttrs, pictureKey, preparePictures, type PreparedPicture } from './pictures'
+import { anchoredAtStart, pictureAttrs, pictureKey, preparePictures, type PreparedPicture } from './pictures'
+import { TEXT_DISTANCE } from '../editor/image'
 import { captionNumbers, collectHeadingsJson } from './common'
 import { t, fmtDate } from '../i18n'
 
@@ -207,7 +208,8 @@ function inlineRuns(node: JSONContent, ctx: Ctx, extra: Any = {}): Any[] {
     else out.push(new ExternalHyperlink({ link: href, children: linkGroup.runs }))
     linkGroup = null
   }
-  for (const c of node.content || []) {
+  const inline = node.content || []
+  inline.forEach((c, index) => {
     const link = c.marks?.find((m) => m.type === 'link')
     const href = link?.attrs?.href as string | undefined
     let runs: Any[] = []
@@ -217,18 +219,25 @@ function inlineRuns(node: JSONContent, ctx: Ctx, extra: Any = {}): Any[] {
       const a = pictureAttrs(c)
       const img = ctx.images.get(pictureKey(a))
       if (img) {
-        const PT = 12700 // EMU per point
-        const floating = a.wrap
+        const EMU = 9525 // per px
+        const dist = a.wrap && TEXT_DISTANCE[a.wrap]
+        const floating = a.wrap && dist
           ? {
-              horizontalPosition: a.x != null ? { relative: HorizontalPositionRelativeFrom.COLUMN, offset: Math.round(a.x * 9525) } : {
+              horizontalPosition: a.x != null ? { relative: HorizontalPositionRelativeFrom.COLUMN, offset: Math.round(a.x * EMU) } : {
                 relative: HorizontalPositionRelativeFrom.COLUMN,
                 align: a.wrap === 'square'
                   ? (a.align === 'right' ? HorizontalPositionAlign.RIGHT : HorizontalPositionAlign.LEFT)
                   : a.align === 'left' ? HorizontalPositionAlign.LEFT : a.align === 'right' ? HorizontalPositionAlign.RIGHT : HorizontalPositionAlign.CENTER,
               },
-              verticalPosition: { relative: VerticalPositionRelativeFrom.PARAGRAPH, offset: Math.round((a.y || 0) * 9525) },
-              wrap: { type: a.wrap === 'square' ? TextWrappingType.SQUARE : TextWrappingType.TOP_AND_BOTTOM, side: TextWrappingSide.BOTH_SIDES },
-              margins: { top: 8 * PT, bottom: 8 * PT, left: 8 * PT, right: 8 * PT },
+              verticalPosition: {
+                relative: anchoredAtStart(inline, index) ? VerticalPositionRelativeFrom.PARAGRAPH : VerticalPositionRelativeFrom.LINE,
+                offset: Math.round((a.y || 0) * EMU),
+              },
+              // Text wraps on one side, as in Grafi: left of a right-hand picture, right of a left-hand one.
+              wrap: a.wrap === 'square'
+                ? { type: TextWrappingType.SQUARE, side: a.align === 'right' ? TextWrappingSide.LEFT : TextWrappingSide.RIGHT }
+                : { type: TextWrappingType.TOP_AND_BOTTOM, side: TextWrappingSide.BOTH_SIDES },
+              margins: { top: Math.round(dist.top * EMU), bottom: Math.round(dist.bottom * EMU), left: Math.round(dist.side * EMU), right: Math.round(dist.side * EMU) },
               allowOverlap: false,
               lockAnchor: false,
             }
@@ -247,7 +256,7 @@ function inlineRuns(node: JSONContent, ctx: Ctx, extra: Any = {}): Any[] {
       flush()
       out.push(...runs)
     }
-  }
+  })
   flush()
   return out
 }
@@ -501,7 +510,7 @@ export async function exportDocx(doc: JSONContent, settings: DocSettings, headin
       },
       fonts: { headings: th.fonts.major, body: th.fonts.minor },
     },
-    creator: settings.author || 'Grafi',
+    creator: settings.author || 'Graphi',
     title: settings.title || undefined,
     description: t('io.createdWith'),
     features: { updateFields: false },

@@ -1,4 +1,4 @@
-// Title-bar search for Grafi's own commands (like Word's "Tell me"), not the document text.
+// Title-bar search for Graphi's own commands (like Word's "Tell me"), not the document text.
 // The index is read from the ribbon itself: every control carries a title, so nothing has to be
 // kept in sync by hand. Picking a result switches to its tab and highlights the control.
 import { useEffect, useMemo, useRef, useState } from 'react'

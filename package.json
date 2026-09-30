@@ -1,9 +1,9 @@
 {
-  "name": "grafi",
-  "productName": "Grafi",
+  "name": "graphi",
+  "productName": "Graphi",
   "version": "1.0.0",
   "description": "Cross-platform word processor (Word / LibreOffice Writer class) — DOCX, PDF, printing.",
-  "author": "Grafi",
+  "author": "Graphi",
   "license": "MIT",
   "main": "electron/main.cjs",
   "type": "module",
@@ -26,7 +26,6 @@
     "@capacitor/status-bar": "^8.0.3",
     "@fontsource/arimo": "^5.3.0",
     "@fontsource/carlito": "^5.3.0",
-    "@huggingface/transformers": "^4.3.0",
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-highlight": "^3.31.3",
     "@tiptap/extension-image": "^3.31.3",
@@ -65,8 +64,8 @@
   },
   "build": {
     "appId": "com.grafi.app",
-    "productName": "Grafi",
-    "copyright": "Copyright © 2026 Grafi",
+    "productName": "Graphi",
+    "copyright": "Copyright © 2026 Graphi",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -95,8 +94,8 @@
       },
       {
         "ext": "grafi",
-        "name": "Grafi Document",
-        "description": "Έγγραφο Grafi",
+        "name": "Graphi Document",
+        "description": "Έγγραφο Graphi",
         "role": "Editor",
         "mimeType": "application/x-grafi"
       }
@@ -121,9 +120,6 @@
       ],
       "icon": "build/icon.png",
       "darkModeSupport": true,
-      "extendInfo": {
-        "NSMicrophoneUsageDescription": "Το Grafi χρησιμοποιεί το μικρόφωνο για την Υπαγόρευση. / Grafi uses the microphone for Dictate."
-      },
       "identity": "-",
       "hardenedRuntime": false
     },
@@ -150,7 +146,7 @@
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
       "createDesktopShortcut": true,
-      "shortcutName": "Grafi"
+      "shortcutName": "Graphi"
     },
     "linux": {
       "target": [
@@ -160,7 +156,7 @@
       ],
       "category": "Office;WordProcessor",
       "icon": "build/icon-win.png",
-      "maintainer": "Grafi",
+      "maintainer": "Graphi",
       "synopsis": "Επεξεργαστής κειμένου συμβατός με DOCX/ODT/PDF"
     }
   }
