@@ -173,8 +173,6 @@ input, select, textarea { font: inherit; color: var(--text); }
 .numfield-spin button { border: none; background: transparent; height: 11px; width: 16px; line-height: 10px; font-size: 9px; cursor: pointer; padding: 0; color: var(--muted); }
 .numfield-spin button:hover { background: var(--hover); color: var(--accent); }
 
-.alt-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); padding-top: 6px; }
-.alt-field input { width: 220px; height: 26px; border: 1px solid var(--border-strong); border-radius: 4px; padding: 0 8px; background: var(--panel); }
 
 /* style gallery */
 .styles-group .rb-group-body { padding-top: 3px; }
@@ -443,6 +441,54 @@ button.sb-item:hover, .sb-icon:hover { background: rgba(255,255,255,.14); }
 .btn.primary { background: var(--teal-700); border-color: var(--teal-700); color: #fff; }
 .btn.primary:hover { background: var(--teal-800); color: #fff; }
 
+/* ───────── dictation ───────── */
+.dict-bar { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 30; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px);
+  background: var(--panel); border: 1px solid var(--border-strong); border-radius: 999px; box-shadow: var(--shadow); padding: 5px 6px 5px 8px; }
+.dict-bar.error { border-radius: 12px; padding: 8px 8px 8px 12px; border-color: #d9822b; }
+.dict-msg { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 12.5px; }
+.dict-meter { position: relative; flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); background: var(--hover); }
+.dict-bar.live .dict-meter { color: #fff; background: var(--primary); animation: dict-pulse 1.6s ease-out infinite; }
+@keyframes dict-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 45%, transparent) } 100% { box-shadow: 0 0 0 10px transparent } }
+.dict-progress { display: block; width: 180px; height: 4px; border-radius: 2px; background: var(--hover); overflow: hidden; }
+.dict-progress i { display: block; height: 100%; background: var(--primary); transition: width 200ms; }
+.dict-lang { font-size: 10.5px; font-weight: 700; letter-spacing: .04em; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; background: transparent; cursor: pointer; }
+.dict-lang:hover { color: var(--accent); border-color: var(--accent); }
+.dict-btn { width: 30px; height: 30px; border-radius: 50%; border: 1px solid transparent; background: transparent; cursor: pointer; display: inline-grid; place-items: center; color: var(--text); }
+.dict-btn:hover:not(:disabled) { background: var(--hover); }
+.dict-btn.on { background: var(--pressed); color: var(--accent-strong); }
+.dict-btn.stop { color: #fff; background: #d64545; }
+.dict-btn.stop:hover:not(:disabled) { background: #b83232; }
+.dict-btn:disabled { opacity: .5; }
+.dict-help { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); width: 280px; background: var(--panel); border: 1px solid var(--border-strong);
+  border-radius: 10px; box-shadow: var(--shadow); padding: 8px 10px; }
+.dict-help.inline { position: static; transform: none; width: auto; min-width: 250px; border: none; box-shadow: none; padding: 0 10px 6px; background: transparent; }
+.dict-help-title { font-weight: 600; margin-bottom: 4px; }
+.dict-help-row { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; font-size: 12px; color: var(--muted); }
+.dict-help-row b { color: var(--text); font-family: Georgia, serif; min-width: 24px; text-align: center; }
+/* At the caret (decorations on the paper, not document text): the words still being recognised and a
+   small live sound wave that shows the microphone hears you. Bar heights come from --dict-l0…4. */
+.dictation-interim { color: #6b8584; background: rgba(26, 179, 172, .12); border-bottom: 1px dashed #1ab3ac; }
+.dict-wave { display: inline-flex; align-items: center; gap: 1.5px; height: 1em; margin: 0 2px 0 3px; padding: 0 4px; vertical-align: -0.12em;
+  border-radius: 999px; background: rgba(26, 179, 172, .14); user-select: none; pointer-events: none; text-indent: 0; }
+.dict-wave i { display: block; width: 2.5px; height: calc(18% + var(--l) * 82%); min-height: 2px; border-radius: 2px; background: var(--primary); transition: height 70ms linear; }
+.dict-wave i:nth-child(2), .dict-wave i:nth-child(4) { background: var(--teal-700); }
+.pdf-capture .dict-bar, .pdf-capture .dictation-interim, .pdf-capture .dict-wave { display: none !important; }
+@media print { .dictation-interim, .dict-wave { display: none; } }
+.dict-consent .modal-body { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 22px 22px 18px; }
+.dict-consent h3 { margin: 4px 0 0; font-size: 15px; }
+.dict-consent p { margin: 0; line-height: 1.5; }
+.dict-consent small { color: var(--muted); font-size: 11.5px; }
+.dict-consent-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: #fff; background: var(--primary); }
+.dict-consent .modal-foot { justify-content: flex-end; }
+.dict-models { align-self: stretch; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 4px 0 2px; }
+.dict-model { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; text-align: left; padding: 10px 12px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--border-strong); background: var(--panel); color: var(--text); }
+.dict-model:hover { border-color: var(--accent); }
+.dict-model.on { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); background: color-mix(in srgb, var(--primary) 7%, var(--panel)); }
+.dict-model-name { font-weight: 600; }
+.dict-model-size { color: var(--muted); font-size: 12px; }
+.dict-model small { grid-column: 1 / -1; }
+
 /* ───────── first-launch welcome ───────── */
 .welcome-backdrop { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; padding: 20px;
   background: rgba(4, 30, 28, .58); backdrop-filter: blur(7px); animation: fade .22s ease-out; }
@@ -557,6 +603,11 @@ kbd { font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--chr
 /* ───────── pictures ───────── */
 .doc-surface .wpic { position: relative; line-height: 0; max-width: 100%; cursor: grab; user-select: none; }
 .doc-surface .wpic img { display: block; max-width: none; user-select: none; -webkit-user-drag: none; }
+.wpic-frame { display: block; position: relative; z-index: 1; overflow: hidden; }
+.wpic-frame img { position: absolute; left: 0; top: 0; }
+/* Crop mode: the cut-off part of the picture shows dimmed around what is kept, as in Word. */
+.wpic-full { position: absolute; z-index: 0; max-width: none; opacity: .35; pointer-events: none; }
+.wpic:not(.selected) .wpic-full { display: none !important; }
 .doc-surface .wpic.selected { outline: 2px solid var(--teal-500); outline-offset: 2px; }
 .doc-surface .wpic.selected { touch-action: none; }
 .doc-surface .wpic.moving { opacity: .3; pointer-events: none; cursor: grabbing; }
@@ -570,7 +621,7 @@ kbd { font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--chr
 body.tbl-dragging, body.tbl-dragging * { cursor: grabbing !important; }
 .wpic-ghost { line-height: 0; }
 .wpic-ghost img { display: block; max-width: none; }
-.wpic-ghost .wpic-handle, .wpic-ghost .wpic-radius, .wpic-ghost .wpic-rotate, .wpic-ghost .wpic-pan-hint { display: none; }
+.wpic-ghost .wpic-handle, .wpic-ghost .wpic-full, .wpic-ghost .wpic-radius, .wpic-ghost .wpic-rotate, .wpic-ghost .wpic-pan-hint { display: none; }
 .wpic-drop { position: fixed; z-index: 1000; pointer-events: none; border: 2px dashed var(--teal-500); border-radius: 3px; background: rgba(20, 184, 166, .08); }
 .doc-surface .wpic-handle { display: none; position: absolute; width: 11px; height: 11px; background: #fff; border: 2px solid var(--teal-600); border-radius: 50%; z-index: 5; }
 .doc-surface .wpic.selected .wpic-handle { display: block; }
@@ -580,7 +631,9 @@ body.tbl-dragging, body.tbl-dragging * { cursor: grabbing !important; }
 .doc-surface .wpic-handle.se { right: -7px; bottom: -7px; cursor: nwse-resize; }
 .doc-surface .wpic-handle.n, .doc-surface .wpic-handle.s, .doc-surface .wpic-handle.e, .doc-surface .wpic-handle.w { display: none; border-radius: 3px; }
 .doc-surface .wpic.wshape.selected .wpic-handle.n, .doc-surface .wpic.wshape.selected .wpic-handle.s,
-.doc-surface .wpic.wshape.selected .wpic-handle.e, .doc-surface .wpic.wshape.selected .wpic-handle.w { display: block; }
+.doc-surface .wpic.wshape.selected .wpic-handle.e, .doc-surface .wpic.wshape.selected .wpic-handle.w,
+.doc-surface .wpic.cropping.selected .wpic-handle.n, .doc-surface .wpic.cropping.selected .wpic-handle.s,
+.doc-surface .wpic.cropping.selected .wpic-handle.e, .doc-surface .wpic.cropping.selected .wpic-handle.w { display: block; }
 .doc-surface .wpic-handle.n { left: calc(50% - 7px); top: -7px; cursor: ns-resize; }
 .doc-surface .wpic-handle.s { left: calc(50% - 7px); bottom: -7px; cursor: ns-resize; }
 .doc-surface .wpic-handle.e { right: -7px; top: calc(50% - 7px); cursor: ew-resize; }
@@ -592,7 +645,7 @@ body.tbl-dragging, body.tbl-dragging * { cursor: grabbing !important; }
   font: 11px/1.3 var(--ui-font); padding: 4px 8px; border-radius: 5px; white-space: nowrap; pointer-events: none; z-index: 6; }
 .doc-surface .wpic.panning { cursor: move; outline: 2px dashed #f59e0b; outline-offset: 2px; }
 .doc-surface .wpic.panning .wpic-pan-hint { display: block; }
-.doc-surface .wpic.panning img { clip-path: none !important; opacity: .95; }
+.doc-surface .wpic.panning .wpic-frame { clip-path: none !important; opacity: .95; }
 .doc-surface .wpic.panning::after { content: ""; position: absolute; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 9999px rgba(0,0,0,0); }
 /* corner-radius handle («Στρογγυλεμένο»): a ring on the top-left diagonal + a live % tip */
 .doc-surface .wpic-radius { display: none; position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; z-index: 6;
@@ -612,7 +665,7 @@ body.tbl-dragging, body.tbl-dragging * { cursor: grabbing !important; }
 .doc-surface .wpic.rotate-drag, .doc-surface .wpic.rotate-drag .wpic-rotate { cursor: grabbing; }
 .doc-surface .wpic.rotate-drag .wpic-rotate .wpic-radius-tip { display: block; }
 .tpl-scale .doc-surface .wpic-rotate { display: none !important; }
-@media print { .doc-surface .wpic.selected { outline: none; } .doc-surface .wpic-handle, .doc-surface .wpic-pan-hint, .doc-surface .wpic-radius, .doc-surface .wpic-rotate { display: none !important; } }
+@media print { .doc-surface .wpic.selected { outline: none; } .doc-surface .wpic-handle, .doc-surface .wpic-full, .doc-surface .wpic-pan-hint, .doc-surface .wpic-radius, .doc-surface .wpic-rotate { display: none !important; } }
 
 .pic-gallery { display: grid; grid-template-columns: repeat(4, 44px); gap: 4px; padding: 2px 0; }
 .pic-gallery.wide { grid-template-columns: repeat(6, auto); }
@@ -641,7 +694,6 @@ body.tbl-dragging, body.tbl-dragging * { cursor: grabbing !important; }
 .radius-field { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text); padding-top: 2px; }
 .radius-field input[type=range] { width: 120px; accent-color: var(--teal-600); }
 .radius-field .val { min-width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
-.alt-field .alt-title { display: flex; align-items: center; gap: 5px; }
 .wrap-cards { display: flex; gap: 6px; }
 .wrap-card { width: 96px; height: 70px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); cursor: pointer; padding: 5px; display: flex; flex-direction: column; gap: 4px; align-items: stretch; color: var(--text); }
 .wrap-card:hover { border-color: var(--teal-300); }

@@ -15,7 +15,7 @@ export interface PreparedPicture {
 }
 
 const DEFAULTS: Omit<ImgAttrs, 'src'> = {
-  alt: null, title: null, width: null, height: null, wrap: null, align: 'center', shape: 'rect', aspect: null, focusX: 50, focusY: 50, shadow: 'none', radius: 12, x: null, y: null, vshape: null,
+  alt: null, title: null, width: null, height: null, wrap: null, align: 'center', shape: 'rect', aspect: null, focusX: 50, focusY: 50, shadow: 'none', radius: 12, x: null, y: null, vshape: null, crop: null,
 }
 
 export const pictureAttrs = (n: JSONContent): ImgAttrs => ({ ...DEFAULTS, ...(n.attrs || {}) } as ImgAttrs)
@@ -48,7 +48,7 @@ function srcHash(src: string) {
 export const pictureKey = (a: ImgAttrs) =>
   a.vshape
     ? JSON.stringify(['shape', a.vshape, a.width, a.height])
-    : JSON.stringify([srcHash(a.src), a.width, a.height, a.shape, a.aspect, a.focusX, a.focusY, a.shadow, a.radius])
+    : JSON.stringify([srcHash(a.src), a.width, a.height, a.shape, a.aspect, a.focusX, a.focusY, a.shadow, a.radius, a.crop])
 
 export async function preparePictures(doc: JSONContent, maxWidthPx: number): Promise<Map<string, PreparedPicture>> {
   const out = new Map<string, PreparedPicture>()

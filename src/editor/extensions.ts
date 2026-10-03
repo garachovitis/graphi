@@ -17,6 +17,7 @@ import { Picture } from './image'
 import { WTable, TableMove } from './table'
 import { SearchReplace } from './SearchReplace'
 import { Proofing } from './Proofing'
+import { Dictation } from './Dictation'
 import { Pagination } from './Pagination'
 import { WordShortcuts } from './format'
 import { OrderedListStyle } from './lists'
@@ -67,6 +68,7 @@ export function editorExtensions(): AnyExtension[] {
     Typography.configure({ oneHalf: false, oneQuarter: false, threeQuarters: false, plusMinus: false, notEqual: false, laquo: false, raquo: false }),
     SearchReplace,
     Proofing,
+    Dictation,
     WordShortcuts,
     TableMove,
     Pagination,

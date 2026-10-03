@@ -29,6 +29,8 @@ import { Canvas, isReflow } from './Canvas'
 import { StatusBar } from './StatusBar'
 import { Backstage, type BackstagePage } from './Backstage'
 import { FindBar } from './FindBar'
+import { DictationBar } from './DictationBar'
+import { dictation } from '../dictation'
 import { ProofPanel, ProofPopover } from './ProofPanel'
 import { proofConfig, setProofConfig, setProofPanelOpen } from '../editor/Proofing'
 import { Dialogs, type DialogState } from './dialogs'
@@ -519,6 +521,7 @@ export function App() {
       case 'redo': if (inField()) document.execCommand('redo'); else c().redo().run(); break
       case 'find': setFind('find'); break
       case 'replace': setFind('replace'); break
+      case 'dictate': void dictation.toggle(editor); break
       case 'viewPrint': setView('print'); break
       case 'viewWeb': setView('web'); break
       case 'toggleRuler': setShowRuler((x) => !x); break
@@ -578,6 +581,8 @@ export function App() {
       if (e.key === 'Escape') { setFind(null); setBackstage(null) }
       // F7 = Spelling & Grammar, as in Word (Electron's menu owns it on desktop)
       if (e.key === 'F7' && !isNative && !mod) { e.preventDefault(); runRef.current('proofing') }
+      // Word's Dictate shortcut (Alt+`), by key position so it also works on the Greek layout.
+      if (e.altKey && !mod && e.code === 'Backquote') { e.preventDefault(); runRef.current('dictate'); return }
       if (!mod) return
       const k = e.key.toLowerCase()
       const map: Record<string, string> = isNative
@@ -655,6 +660,7 @@ export function App() {
         <Canvas api={api} />
         {find && <FindBar editor={editor} mode={find} setMode={setFind} onClose={() => { setFind(null); editor.commands.clearSearch(); editor.commands.focus() }} />}
         {proofOpen && <ProofPanel api={api} onClose={() => { setProofOpen(false); editor.commands.focus() }} />}
+        <DictationBar editor={editor} />
       </div>
       <ProofPopover api={api} panelOpen={proofOpen} openPanel={() => setProofOpen(true)} />
       <StatusBar api={api} />

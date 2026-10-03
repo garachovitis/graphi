@@ -1,5 +1,5 @@
-// Dictation in the editor: words still being recognised are a widget decoration at the caret
-// (never document content); a finished phrase is inserted as one undo step with the caret's formatting.
+// Dictation in the editor: a listening wave and the words still being recognised are widget
+// decorations at the caret (never document content); a finished phrase is inserted as one undo step with the caret's formatting.
 import { Extension, type Editor } from '@tiptap/core'
 import { Plugin, PluginKey, type Selection } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
@@ -10,34 +10,61 @@ declare module '@tiptap/core' {
     dictation: {
       /** Grey preview of the phrase in progress ('' hides it). */
       setDictationInterim: (text: string, o: RenderOpts) => ReturnType
+      /** Show / hide the listening wave at the caret. */
+      setDictationActive: (on: boolean) => ReturnType
     }
   }
 }
 
-const key = new PluginKey<string>('dictation')
+interface DictView { active: boolean; text: string }
+const key = new PluginKey<DictView>('dictation')
 
 /** Paragraph text before the caret (inline nodes count as one character). */
-const textBefore = (sel: Selection) => sel.$from.parent.textBetween(0, sel.$from.parentOffset, undefined, '￼')
+const textBefore = (sel: Selection) => sel.$from.parent.textBetween(0, sel.$from.parentOffset, undefined, '\ufffc')
+
+// The wave's bars follow `--dict-l0…4`, set on the editor ~33×/s by the controller: one element,
+// kept across transactions (same key), so typing or new words never restart its animation.
+function wave() {
+  const w = document.createElement('span')
+  w.className = 'dict-wave'
+  w.setAttribute('aria-hidden', 'true')
+  w.contentEditable = 'false'
+  for (let i = 0; i < 5; i++) {
+    const b = document.createElement('i')
+    b.style.setProperty('--l', `var(--dict-l${i}, 0)`)
+    w.append(b)
+  }
+  return w
+}
 
 export const Dictation = Extension.create({
   name: 'dictation',
 
   addProseMirrorPlugins() {
     return [
-      new Plugin<string>({
+      new Plugin<DictView>({
         key,
         state: {
-          init: () => '',
-          apply: (tr, v) => (tr.getMeta(key) as string | undefined) ?? v,
+          init: () => ({ active: false, text: '' }),
+          apply: (tr, v) => {
+            const m = tr.getMeta(key) as Partial<DictView> | undefined
+            return m ? { ...v, ...m } : v
+          },
         },
         props: {
           decorations(state) {
-            const text = key.getState(state)
-            if (!text) return null
-            const w = document.createElement('span')
-            w.className = 'dictation-interim'
-            w.textContent = text
-            return DecorationSet.create(state.doc, [Decoration.widget(state.selection.head, w, { side: 1, key: text })])
+            const { active, text } = key.getState(state)!
+            if (!active && !text) return null
+            const pos = state.selection.head
+            const decos: Decoration[] = []
+            if (text) {
+              const t = document.createElement('span')
+              t.className = 'dictation-interim'
+              t.textContent = text
+              decos.push(Decoration.widget(pos, t, { side: 1, key: `t:${text}` }))
+            }
+            if (active) decos.push(Decoration.widget(pos, wave, { side: 2, key: 'dict-wave', ignoreSelection: true }))
+            return DecorationSet.create(state.doc, decos)
           },
         },
       }),
@@ -48,8 +75,13 @@ export const Dictation = Extension.create({
     return {
       setDictationInterim: (text, o) => ({ state, tr, dispatch }) => {
         const shown = text ? preview(text, textBefore(state.selection), o) : ''
-        if (shown === key.getState(state)) return true
-        dispatch?.(tr.setMeta(key, shown).setMeta('addToHistory', false))
+        if (shown === key.getState(state)!.text) return true
+        dispatch?.(tr.setMeta(key, { text: shown }).setMeta('addToHistory', false))
+        return true
+      },
+      setDictationActive: (on) => ({ state, tr, dispatch }) => {
+        if (on === key.getState(state)!.active) return true
+        dispatch?.(tr.setMeta(key, { active: on, text: '' }).setMeta('addToHistory', false))
         return true
       },
     }
@@ -70,7 +102,7 @@ export function insertDictation(editor: Editor, text: string, o: RenderOpts): bo
       const { from, $from } = editor.state.selection
       const del = Math.min(op.deleteBefore, $from.parentOffset)
       // insertText keeps the caret's marks (bold, font, colour…) just like typing.
-      if (op.text || del) view.dispatch(editor.state.tr.insertText(op.text, from - del, from).setMeta(key, '').scrollIntoView())
+      if (op.text || del) view.dispatch(editor.state.tr.insertText(op.text, from - del, from).setMeta(key, { text: '' }).scrollIntoView())
     } else if (op.type === 'para') {
       editor.commands.first(({ commands }) => [() => commands.splitListItem('listItem'), () => commands.splitListItem('taskItem'), () => commands.splitBlock()])
     } else {

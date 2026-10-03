@@ -11,8 +11,10 @@ env.allowLocalModels = false
 env.backends.onnx.wasm!.wasmPaths = { wasm: new URL(ortWasm, self.location.href).href } as any
 
 export type ToWorker =
-  | { type: 'load'; repo: string; rev: string; dtype: Dtype; host: string | null }
-  | { type: 'run'; id: number; audio: Float32Array; lang: 'el' | 'en' }
+  | { type: 'load'; repo: string; rev: string; dtype: Dtype; host: string | null; gen: Gen }
+  | { type: 'run'; id: number; audio: Float32Array; gen: Gen }
+/** The model's generation options (language…); see ModelDef.gen. */
+type Gen = Record<string, unknown>
 export type FromWorker =
   | { type: 'progress'; loaded: number; total: number }
   | { type: 'loading' }
@@ -22,10 +24,10 @@ export type FromWorker =
 
 let asr: AutomaticSpeechRecognitionPipeline | null = null
 const post = (m: FromWorker) => (self as unknown as Worker).postMessage(m)
-// ~6 tokens a second is fast speech; the cap stops a runaway decode on noise.
-const maxTokens = (samples: number) => Math.min(448, 24 + Math.ceil((samples / 16000) * 8))
+// ~6 tokens a second is fast speech; the cap stops a runaway decode on noise (Whisper's limit is 448).
+const opts = (gen: Gen, samples: number) => ({ ...gen, max_new_tokens: Math.min(440, 24 + Math.ceil((samples / 16000) * 8)) })
 
-async function load({ repo, rev, dtype, host }: Extract<ToWorker, { type: 'load' }>) {
+async function load({ repo, rev, dtype, host, gen }: Extract<ToWorker, { type: 'load' }>) {
   if (host) { env.remoteHost = host; env.useBrowserCache = false } // the disk is the cache
   const files = new Map<string, [number, number]>()
   asr = await pipeline('automatic-speech-recognition', repo, {
@@ -43,9 +45,9 @@ async function load({ repo, rev, dtype, host }: Extract<ToWorker, { type: 'load'
   }) as AutomaticSpeechRecognitionPipeline
   // Compile the GPU shaders now, not on the user's first sentence; the second run shows the real speed.
   const silence = new Float32Array(16000)
-  await asr(silence, { language: 'el', max_new_tokens: 8 } as any)
+  await asr(silence, opts(gen, 0) as any)
   const t = performance.now()
-  await asr(silence, { language: 'el', max_new_tokens: 8 } as any)
+  await asr(silence, opts(gen, 0) as any)
   post({ type: 'ready', ms: performance.now() - t })
 }
 
@@ -55,7 +57,7 @@ self.onmessage = async (e: MessageEvent<ToWorker>) => {
     if (m.type === 'load') await load(m)
     else if (m.type === 'run') {
       if (!asr) throw new Error('model not loaded')
-      const out = await asr(m.audio, { language: m.lang, max_new_tokens: maxTokens(m.audio.length) } as any)
+      const out = await asr(m.audio, opts(m.gen, m.audio.length) as any)
       post({ type: 'result', id: m.id, text: (Array.isArray(out) ? out[0] : out).text })
     }
   } catch (err: any) {

@@ -11,14 +11,17 @@ const ROOT = dirname(fileURLToPath(import.meta.url))
 // Graphi never talks to a server: everything is the app's own or embedded in the document, so no
 // remote script, style, font or image is allowed. `connect-src https:` exists only for Insert ▸
 // Pictures ▸ From a URL on web / mobile (an address the user types); Electron downloads that
-// picture in the main process and blocks all renderer traffic anyway.
+// picture in the main process and blocks all renderer traffic anyway. Dictation runs its speech model
+// as WebAssembly / WebGPU in a worker; on desktop the files come from the main process (grafi-model:),
+// on the web from Hugging Face (https:), only after the user agreed to the download.
 const CSP = [
   "default-src 'self'",
   "img-src 'self' data: blob:",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
-  "script-src 'self'",
-  "connect-src 'self' https:",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "worker-src 'self' blob:",
+  "connect-src 'self' https: grafi-model:",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'none'",

@@ -14,7 +14,7 @@ import { DEFAULT_SETTINGS, detectPaper, mmToPx, normalizeSettings, twipToMm, typ
 import { DEFAULT_FONT, PARA_STYLES, fontStack, type ParaStyle } from '../model/styles'
 import { bytesToDataUrl } from './images'
 import { hoistToStart } from './pictures'
-import { MIN_Y, normRotate, squareSide } from '../editor/image'
+import { MIN_Y, normRotate, parseImgCrop, squareSide } from '../editor/image'
 import { colorDistance, isHex, parseThemeRef, parseThemeXml, resolveColor, snapPct, themeVar, type DocTheme, type Slot } from '../model/themes'
 import { tableStyle, unbakeTableStyle } from '../model/tableStyles'
 import { t } from '../i18n'
@@ -576,7 +576,11 @@ function readImage(el: El, ctx: Ctx): JSONContent | null {
   const alt = docPr?.getAttribute('descr') || docPr?.getAttribute('title') || null
   // <a:xfrm rot> is in 60000ths of a degree, clockwise.
   const rot = Number(el.getElementsByTagName('a:xfrm')[0]?.getAttribute('rot') || 0) / 60000
-  const node: JSONContent = { type: 'image', attrs: { src, alt, title: null, width, height, wrap, align, x, y, page, rotate: normRotate(rot) } }
+  // <a:srcRect> crops in 1/1000 %; a negative side (padding) is ignored.
+  const sr = el.getElementsByTagName('a:srcRect')[0]
+  const side = (k: string) => Number(sr?.getAttribute(k) || 0) / 1e5
+  const crop = sr ? parseImgCrop({ l: side('l'), t: side('t'), r: side('r'), b: side('b') }) : null
+  const node: JSONContent = { type: 'image', attrs: { src, alt, title: null, width, height, wrap, align, x, y, page, rotate: normRotate(rot), crop } }
   if (edgeH || edgeV) ctx.fromPageEdge.push({ node, h: edgeH, v: edgeV })
   if (paragraphRelative) ctx.paragraphAnchored.add(node)
   if (sideByPosition) ctx.sideByPosition.add(node)

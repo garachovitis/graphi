@@ -30,7 +30,7 @@ interface NativeBridge {
   fetchImage(u: string): Promise<FetchedImage>
   /** The dictation model, served by the main process (see electron/model.cjs). */
   modelHost?: string
-  modelMissing?(files: string[]): Promise<string[]>
+  modelMissing?(repo: string, files: string[]): Promise<string[]>
   allowModelDownload?(): Promise<void>
   removeModel?(): Promise<void>
   reveal(p: string): Promise<void>
@@ -282,12 +282,12 @@ export const platform = {
   /**
    * Where the dictation model's files live. Desktop: the main process keeps them on disk and downloads
    * them only after `allow()` (the page itself has no network). Web: the browser's Cache Storage,
-   * filled by transformers.js. `files` are repo paths, `url(f)` their Hugging Face address.
+   * filled by transformers.js. `files` are paths in the model's repo, `url(f)` their Hugging Face address.
    */
   speechModel: {
     host: native?.modelHost ?? null,
-    async missing(files: string[], url: (f: string) => string): Promise<string[]> {
-      if (native?.modelMissing) return native.modelMissing(files)
+    async missing(repo: string, files: string[], url: (f: string) => string): Promise<string[]> {
+      if (native?.modelMissing) return native.modelMissing(repo, files)
       try {
         const cache = await caches.open(TRANSFORMERS_CACHE)
         const hits = await Promise.all(files.map((f) => cache.match(url(f))))

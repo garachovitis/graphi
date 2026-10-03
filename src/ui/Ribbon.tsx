@@ -24,8 +24,12 @@ import { setTableStyle } from '../editor/table'
 import { CommandSearch, CMD_SELECTOR, type CmdEntry } from './CommandSearch'
 import { ShapeGallery, ShapeIcon, insertShape, changeKind } from './ShapeTools'
 import { LINE_WEIGHTS_PT, hasCrop, isLine, ptToPx, pxToPt, shapeSrc, type VShape } from '../editor/shapes'
-import { IMG_ASPECTS, IMG_SHADOWS, IMG_SHAPES, SHADOW, DEFAULT_RADIUS, aspectValue, clampRadius, displaySize, isShapeCropMode, setShapeCropMode, formatRadius, normRotate, radiusToSlider, sliderToRadius, shapeClipCss, type ImgAttrs } from '../editor/image'
+import { IMG_ASPECTS, IMG_SHADOWS, IMG_SHAPES, SHADOW, DEFAULT_RADIUS, aspectValue, clampRadius, displaySize, isShapeCropMode, setShapeCropMode, onCropMode, croppedNatural, hasImgCrop, formatRadius, normRotate, radiusToSlider, sliderToRadius, shapeClipCss, type ImgAttrs } from '../editor/image'
 import { Ill } from './illustrations'
+import { dictation, useDictation, useDictPrefs } from '../dictation'
+import { COMMAND_HELP } from '../dictation/text'
+import { removeModels } from '../dictation/model'
+import { toast } from './toast'
 import type { BreakKind } from '../editor/nodes'
 import { insertTrainingImage } from './Training'
 import { t, fmtNum, fmtDate, fmtLongDate, numText } from '../i18n'
@@ -293,7 +297,44 @@ function HomeTab({ api }: { api: AppApi }) {
         <Btn big icon={ill('replace', B)} label={t('edit.replace')} title={`${t('edit.replace')} (${modKey}H)`} onClick={() => api.openFind('replace')} />
       </Group>
 
+      <VoiceGroup api={api} />
+
     </>
+  )
+}
+
+/** Home ▸ Voice ▸ Dictate: split button; the arrow holds the language, punctuation and the command list. */
+function VoiceGroup({ api }: { api: AppApi }) {
+  const d = useDictation()
+  const prefs = useDictPrefs()
+  const on = d.phase !== 'idle' && d.phase !== 'consent'
+  const set = (p: Partial<typeof prefs>, close: () => void) => { dictation.setPrefs(p); close() }
+  return (
+    <Group label={t('g.voice')}>
+      <Dropdown big icon={ill(on ? 'dictateOn' : 'dictate', B)} label={t('dict.dictate')} active={on} popClass="dict-pop"
+        title={`${on ? t('dict.stop') : t('dict.dictate')} (Alt+\`)`} onClick={() => api.run('dictate')}>
+        {(close) => (
+          <>
+            <MenuTitle>{t('dict.language')}</MenuTitle>
+            <MenuItem label={t('dict.langEl')} active={prefs.lang === 'el'} onClick={() => set({ lang: 'el' }, close)} />
+            <MenuItem label={t('dict.langEn')} active={prefs.lang === 'en'} onClick={() => set({ lang: 'en' }, close)} />
+            <MenuSep />
+            <MenuItem label={t('dict.autoPunct')} active={prefs.autoPunct} onClick={() => set({ autoPunct: !prefs.autoPunct }, close)} />
+            <MenuSep />
+            <MenuTitle>{t('dict.model')}</MenuTitle>
+            <MenuItem label={t('dict.model.lite')} hint={t('dict.model.liteHint')} active={prefs.model === 'lite'} onClick={() => set({ model: 'lite' }, close)} />
+            <MenuItem label={t('dict.model.best')} hint={t('dict.model.bestHint')} active={prefs.model === 'best'} onClick={() => set({ model: 'best' }, close)} />
+            <MenuSep />
+            <MenuTitle>{t('dict.commands')} · {t('dict.say')}:</MenuTitle>
+            <div className="dict-help inline">
+              {COMMAND_HELP[prefs.lang].map(([say, mark]) => <div key={say} className="dict-help-row"><span>{say}</span><b>{mark}</b></div>)}
+            </div>
+            <MenuSep />
+            <MenuItem label={t('dict.removeModel')} onClick={() => { close(); void dictation.stop().then(removeModels).then(() => toast(t('dict.removed'))) }} />
+          </>
+        )}
+      </Dropdown>
+    </Group>
   )
 }
 
@@ -855,7 +896,9 @@ function PictureTab({ api }: { api: AppApi }) {
   const pxToCm = (px: number) => Math.round((px / 96) * 2.54 * 100) / 100
   const cmToPx = (cm: number) => Math.round((cm / 2.54) * 96)
   const colW = mmToPx(api.settings.width - api.settings.margins.left - api.settings.margins.right)
-  const natRatio = natural ? natural.h / natural.w : box.h / box.w
+  const shown = natural && croppedNatural(a, natural)
+  const natRatio = shown ? shown.h / shown.w : box.h / box.w
+  const [cropping, crop] = useCropMode()
   const set = (patch: Partial<ImgAttrs>) => e.chain().focus().updateAttributes('image', patch).run()
   const setWidth = (nw: number) => {
     const w = Math.max(12, Math.min(colW, Math.round(nw)))
@@ -944,18 +987,17 @@ function PictureTab({ api }: { api: AppApi }) {
           <Btn icon={ill("fitWidth")} label={t('pic.fitText')} title={t('pic.fitTextTitle')} onClick={() => setWidth(colW)} />
         </Col>
       </Group>
-      <Group label={t('g.accessibility')}>
-        <label className="alt-field">
-          <span className="alt-title">{ill('altText', 20)}{t('pic.alt')}</span>
-          <input defaultValue={a.alt || ''} key={a.src?.slice(-32)} placeholder={t('pic.altPlaceholder')}
-            onBlur={(ev) => e.chain().updateAttributes('image', { alt: ev.target.value || null }).run()}
-            onKeyDown={(ev) => { if (ev.key === 'Enter') (ev.target as HTMLInputElement).blur() }} />
-        </label>
+      <Group label={t('g.crop')}>
+        <Btn big active={cropping} icon={CROP_ICON} label={t('shp.crop')} title={t('pic.cropTitle')} onClick={() => crop(!cropping)} />
+        <Col>
+          <Btn icon={ill('resetSize')} label={t('shp.cropReset')} title={t('pic.cropResetTitle')} disabled={!hasImgCrop(a.crop)}
+            onClick={() => natural && set({ crop: null, height: Math.round(box.w * (natural.h / natural.w)) })} />
+        </Col>
       </Group>
       <Group label={t('g.actions')}>
         <Col>
           <Btn icon={ill("replaceImage")} label={t('pic.change')} title={t('pic.changeTitle')} onClick={() => replaceRef.current?.click()} />
-          <Btn icon={ill("resetStyle")} label={t('pic.reset')} title={t('pic.resetTitle')} onClick={() => set({ shape: 'rect', aspect: null, focusX: 50, focusY: 50, shadow: 'none', radius: DEFAULT_RADIUS, rotate: 0 })} />
+          <Btn icon={ill("resetStyle")} label={t('pic.reset')} title={t('pic.resetTitle')} onClick={() => set({ shape: 'rect', aspect: null, crop: null, focusX: 50, focusY: 50, shadow: 'none', radius: DEFAULT_RADIUS, rotate: 0, ...(natural ? { height: Math.round(box.w * (natural.h / natural.w)) } : {}) })} />
           <Btn icon={ill("delete")} label={t('common.delete')} title={t('pic.deleteTitle')} onClick={() => e.chain().focus().deleteSelection().run()} />
         </Col>
         <input ref={replaceRef} type="file" accept="image/*" className="hidden-input" onChange={async (ev) => {
@@ -989,6 +1031,22 @@ const CROP_ICON = (
   </svg>
 )
 
+/** Crop mode (Περικοπή), in step with the pictures; Esc / Enter or leaving the tab ends it, like Word. */
+export function useCropMode() {
+  const [on, setOn] = useState(isShapeCropMode)
+  useEffect(() => {
+    const off = onCropMode(() => setOn(isShapeCropMode()))
+    const key = (ev: KeyboardEvent) => {
+      if (!isShapeCropMode() || (ev.key !== 'Escape' && ev.key !== 'Enter')) return
+      ev.preventDefault(); ev.stopPropagation()
+      setShapeCropMode(false)
+    }
+    document.addEventListener('keydown', key, true)
+    return () => { off(); document.removeEventListener('keydown', key, true); setShapeCropMode(false) }
+  }, [])
+  return [on, setShapeCropMode] as const
+}
+
 function ShapeTab({ api }: { api: AppApi }) {
   const { editor: e } = api
   const a = e.getAttributes('image') as ImgAttrs
@@ -1000,10 +1058,7 @@ function ShapeTab({ api }: { api: AppApi }) {
   const cmToPx = (cm: number) => Math.round((cm / 2.54) * 96)
   const set = (patch: Partial<ImgAttrs>) => e.chain().focus().updateAttributes('image', patch).run()
   const setV = (patch: Partial<VShape>) => { const nv = { ...v, ...patch }; set({ vshape: nv, src: shapeSrc(nv, box.w, box.h) }) }
-  const [cropping, setCropping] = useState(isShapeCropMode)
-  const crop = (on: boolean) => { setShapeCropMode(on); setCropping(on) }
-  // Leaving the shape (or its tab) ends crop mode, like Word.
-  useEffect(() => () => setShapeCropMode(false), [])
+  const [cropping, crop] = useCropMode()
   const setSize = (w: number, h: number) => {
     w = Math.max(12, Math.min(colW, Math.round(w))); h = Math.max(line ? 12 : 16, Math.round(h))
     set({ width: w, height: h, src: shapeSrc(v, w, h) })

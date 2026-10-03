@@ -26,7 +26,7 @@ contextBridge.exposeInMainWorld('grafiNative', {
   openExternal: (u) => ipcRenderer.invoke('shell:open', u),
   fetchImage: (u) => ipcRenderer.invoke('net:fetch-image', u),
   modelHost: 'grafi-model://hf/',
-  modelMissing: (files) => ipcRenderer.invoke('model:missing', files),
+  modelMissing: (repo, files) => ipcRenderer.invoke('model:missing', repo, files),
   allowModelDownload: () => ipcRenderer.invoke('model:allow'),
   removeModel: () => ipcRenderer.invoke('model:remove'),
   reveal: (p) => ipcRenderer.invoke('shell:reveal', p),

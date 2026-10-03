@@ -11,7 +11,7 @@ import { ThemesMenu, ColorsMenu, FontsMenu, ThemeThumb } from './ThemeTools'
 import { currentStyle, currentFontSizePt, growFont } from '../editor/format'
 import { MARGIN_PRESETS, PAPER_SIZES, withOrientation, withPaper, mmToPx } from '../model/settings'
 import { IMG_ASPECTS, IMG_SHADOWS, IMG_SHAPES, displaySize, type ImgAttrs } from '../editor/image'
-import { insertCaption } from './Ribbon'
+import { insertCaption, useCropMode } from './Ribbon'
 import { Ill } from './illustrations'
 import { ShapeGallery, insertShape, changeKind } from './ShapeTools'
 import { isLine, shapeSrc, type VShape } from '../editor/shapes'
@@ -298,6 +298,7 @@ function PictureTools({ api }: { api: AppApi }) {
     const w = Math.max(24, Math.min(colW, Math.round(box.w * k)))
     set({ width: w, height: Math.round((w * box.h) / box.w) })
   }
+  const [cropping, crop] = useCropMode()
   return (
     <>
       <MBtn icon={<Ill name="wrapTopBottom" size={S} />} label={t('m.topBottom')} active={a.wrap === 'topBottom'} onClick={() => set({ wrap: 'topBottom', align: a.align || 'center' })} />
@@ -337,6 +338,7 @@ function PictureTools({ api }: { api: AppApi }) {
           </>
         )}
       </MDrop>}
+      {(!v || !isLine(v.k)) && <MBtn icon={<Ill name="crop" size={S} />} label={t('shp.crop')} active={cropping} onClick={() => crop(!cropping)} />}
       {!v && <MDrop icon={<Ill name="shadow" size={S} />} label={t('g.shadow')} active={!!a.shadow && a.shadow !== 'none'}>
         {(close) => <>{IMG_SHADOWS.map((s) => <MenuItem key={s.id} label={s.label} active={(a.shadow || 'none') === s.id} onClick={() => { set({ shadow: s.id }); close() }} />)}</>}
       </MDrop>}

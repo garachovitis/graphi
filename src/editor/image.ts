@@ -6,7 +6,8 @@
 // Both are placed freely on a page and stay there whatever happens to the text (floats.ts):
 // dragged anywhere inside a page's text area, never between pages; the ribbon's left / centre /
 // right buttons align them horizontally (x = null).
-// Plus shape crops (circle, rounded, hexagon…), aspect-ratio crops with a movable
+// Plus Word's free crop (Περικοπή: the handles cut into any side, the cut-off part shows dimmed),
+// shape crops (circle, rounded, hexagon…), aspect-ratio crops with a movable
 // focal point (double-click to pan the picture inside its frame), and shadows.
 // The «Στρογγυλεμένο» shape has an adjustable corner radius: drag the corner handle on
 // the picture (Canva-style) or use the ribbon field.
@@ -109,6 +110,34 @@ export function aspectValue(a: string | null | undefined): number | null {
   return w > 0 && h > 0 ? w / h : null
 }
 
+/** Cut-off share of the original picture on each side (0–0.95), like Word's <a:srcRect>. */
+export type ImgCrop = { l: number; t: number; r: number; b: number }
+export const hasImgCrop = (c?: ImgCrop | null): c is ImgCrop => !!c && c.l + c.t + c.r + c.b > 0.0005
+export function parseImgCrop(v: unknown): ImgCrop | null {
+  let o: any = v
+  if (typeof v === 'string') { try { o = JSON.parse(v) } catch { return null } }
+  if (!o || typeof o !== 'object') return null
+  const f = (n: unknown) => { const x = Number(n); return Number.isFinite(x) ? Math.max(0, Math.min(0.95, x)) : 0 }
+  const c = { l: f(o.l), t: f(o.t), r: f(o.r), b: f(o.b) }
+  return hasImgCrop(c) && c.l + c.r < 0.98 && c.t + c.b < 0.98 ? c : null
+}
+/** The part of the original picture that is shown (px of the original). */
+export function croppedNatural(a: Pick<ImgAttrs, 'crop'>, natural: { w: number; h: number }) {
+  const c = hasImgCrop(a.crop) ? a.crop : null
+  return c ? { w: natural.w * (1 - c.l - c.r), h: natural.h * (1 - c.t - c.b) } : natural
+}
+/**
+ * Where the whole original picture is drawn relative to the box (px): its cropped part scaled to
+ * cover the box (an aspect / shape crop cuts it further, at the focal point).
+ */
+export function picRect(a: ImgAttrs, box: { w: number; h: number }, natural: { w: number; h: number }) {
+  const c = hasImgCrop(a.crop) ? a.crop : { l: 0, t: 0, r: 0, b: 0 }
+  const shown = croppedNatural(a, natural)
+  const s = Math.max(box.w / shown.w, box.h / shown.h)
+  const ox = ((box.w - shown.w * s) * a.focusX) / 100, oy = ((box.h - shown.h * s) * a.focusY) / 100
+  return { x: ox - c.l * natural.w * s, y: oy - c.t * natural.h * s, w: natural.w * s, h: natural.h * s }
+}
+
 export interface ImgAttrs {
   src: string; alt: string | null; title: string | null; width: number | null; height: number | null
   wrap: ImgWrap | null; align: ImgAlign; shape: ImgShape; aspect: string | null; focusX: number; focusY: number; shadow: ImgShadow
@@ -125,10 +154,13 @@ export interface ImgAttrs {
   vshape?: VShape | null
   /** Clockwise rotation about the centre, degrees (0–359). Text wraps around the unrotated box, as in Word. */
   rotate?: number
+  /** Free crop (Περικοπή); null = the whole picture. */
+  crop?: ImgCrop | null
 }
 
 /** Displayed box size (px) given attributes. */
 export function displaySize(a: ImgAttrs, natural?: { w: number; h: number }): { w: number; h: number } {
+  if (natural && !a.vshape) natural = croppedNatural(a, natural)
   const w = a.width || natural?.w || 300
   const ratio = aspectValue(a.shape === 'circle' ? '1:1' : a.aspect)
   if (ratio) return { w, h: Math.round(w / ratio) }
@@ -187,6 +219,8 @@ export function pictureStyles(a: ImgAttrs, box: { w: number; h: number }, o: { w
   }
   const clip = shapeClipCss(a.shape, box, a.radius)
   if (clip !== 'none') img.push(`clip-path:${clip}`)
+  const c = hasImgCrop(a.crop) && !a.vshape ? a.crop : null
+  if (c) img.push(`object-view-box:inset(${[c.t, c.r, c.b, c.l].map((v) => `${+(v * 100).toFixed(3)}%`).join(' ')})`)
   // The `rotate` property, not `transform`: dragging moves the picture with a transform of its own.
   if (a.rotate) wrap.push(`rotate:${normRotate(a.rotate)}deg`)
   const sh = SHADOW[a.shadow || 'none']
@@ -254,7 +288,7 @@ type Drop = ({ page: number; x: number; y: number } | { pos: number; attrs: Part
   preview: { left: number; top: number }
 }
 
-// Shape crop mode (Μορφή σχήματος ▸ Περικοπή): while on, the selected shape's handles crop instead of resize.
+// Crop mode (Εικόνα / Μορφή σχήματος ▸ Περικοπή): while on, the selected picture's or shape's handles crop instead of resize.
 let cropMode = false
 const cropListeners = new Set<() => void>()
 export const isShapeCropMode = () => cropMode
@@ -266,14 +300,18 @@ export function setShapeCropMode(on: boolean) {
 export function onCropMode(f: () => void) { cropListeners.add(f); return () => { cropListeners.delete(f) } }
 
 /** Attributes that move or resize a picture: a change places it again. */
-const PLACING = ['page', 'x', 'y', 'wrap', 'align', 'width', 'height', 'aspect', 'shape', 'vshape']
+const PLACING = ['page', 'x', 'y', 'wrap', 'align', 'width', 'height', 'aspect', 'shape', 'vshape', 'crop']
 
 class PictureView implements NodeView, Floating {
   /** In-line: the picture itself. Wrapped: only the anchor (empty); the picture is drawn by a carrier (floats.ts). */
   dom: HTMLElement
   /** The picture as drawn (`.wpic`). */
   el: HTMLElement
+  /** The box the picture is shown in: cuts it to its crop and shape. */
+  private frame: HTMLElement
   img: HTMLImageElement
+  /** While cropping: the whole picture, dimmed, around the part that is kept (as in Word). */
+  private full: HTMLImageElement
   readonly uid = nextUid()
   place: Place | null = null
   private readonly wrapped: boolean
@@ -292,6 +330,13 @@ class PictureView implements NodeView, Floating {
     this.shadow.className = 'wpic-shadow'
     this.shadow.appendChild(document.createElement('span'))
     this.el.appendChild(this.shadow)
+    this.full = document.createElement('img')
+    this.full.className = 'wpic-full'
+    this.full.draggable = false
+    this.full.alt = ''
+    this.el.appendChild(this.full)
+    this.frame = document.createElement('span')
+    this.frame.className = 'wpic-frame'
     this.img = document.createElement('img')
     this.img.draggable = false
     this.img.addEventListener('load', () => {
@@ -299,8 +344,9 @@ class PictureView implements NodeView, Floating {
       this.render()
       if (this.wrapped) requestPlacement(this.view)
     })
-    this.el.appendChild(this.img)
-    // Side handles (n, e, s, w) only show on shapes: pictures always keep their proportions.
+    this.frame.appendChild(this.img)
+    this.el.appendChild(this.frame)
+    // Side handles (n, e, s, w) only show on shapes and while cropping: pictures always keep their proportions.
     for (const corner of ['nw', 'ne', 'sw', 'se', 'n', 'e', 's', 'w']) {
       const h = document.createElement('span')
       h.className = `wpic-handle ${corner}`
@@ -371,10 +417,10 @@ class PictureView implements NodeView, Floating {
     if (this.img.getAttribute('src') !== src) this.img.src = src
     this.img.alt = a.alt || ''
     this.el.classList.toggle('wshape', !!a.vshape)
-    this.el.classList.toggle('cropping', !!a.vshape && cropMode && !isLine(a.vshape.k))
+    this.el.classList.toggle('cropping', this.cropping())
     const st = pictureStyles(a, box, { lineHeight: this.lineHeight(), place: this.wrapped ? this.place : null })
     this.el.setAttribute('style', st.wrap)
-    this.img.setAttribute('style', `${st.img};position:relative;z-index:1`)
+    this.drawImg(a, box)
     const sl = shadowLayerStyles(a, box)
     this.shadow.style.display = sl ? '' : 'none'
     if (sl) {
@@ -385,6 +431,22 @@ class PictureView implements NodeView, Floating {
     this.el.dataset.pinned = this.wrapped && isPinned(this.node) ? '1' : ''
     this.el.dataset.free = this.wrapped && this.place?.free ? '1' : ''
     this.placeRadiusHandle(box, radiusPx(a.radius, box))
+  }
+
+  private cropping() { const v = this.attrs.vshape; return cropMode && (!v || !isLine(v.k)) }
+
+  /** Sizes the frame to `box` and draws the picture in it (and, while cropping, the whole picture around it). */
+  private drawImg(a: ImgAttrs, box: { w: number; h: number }, stretch = false) {
+    const clip = shapeClipCss(a.shape, box, a.radius)
+    this.frame.setAttribute('style', `width:${box.w}px;height:${box.h}px${clip !== 'none' ? `;clip-path:${clip}` : ''}`)
+    const px = (n: number) => `${+n.toFixed(2)}px`
+    // Shapes are drawn at their box size; a picture not loaded yet simply covers its box.
+    const r = !a.vshape && this.natural ? picRect(a, box, this.natural) : null
+    this.img.setAttribute('style', r ? `left:${px(r.x)};top:${px(r.y)};width:${px(r.w)};height:${px(r.h)}`
+      : `width:100%;height:100%;object-fit:${stretch ? 'fill' : 'cover'};object-position:${a.focusX}% ${a.focusY}%`)
+    const showFull = !!r && this.cropping()
+    if (showFull && this.full.getAttribute('src') !== a.src) this.full.src = a.src
+    this.full.setAttribute('style', showFull ? `left:${px(r!.x)};top:${px(r!.y)};width:${px(r!.w)};height:${px(r!.h)}` : 'display:none')
   }
 
   /** Line height (px) of the paragraph the picture is drawn in, once it is in the document. */
@@ -427,7 +489,7 @@ class PictureView implements NodeView, Floating {
     }
     const show = (pct: number) => {
       const clip = shapeClipCss('rounded', box, pct)
-      this.img.style.clipPath = clip
+      this.frame.style.clipPath = clip
       ;(this.shadow.firstChild as HTMLElement).style.clipPath = clip
       this.placeRadiusHandle(box, radiusPx(pct, box))
       tip.textContent = formatRadius(pct)
@@ -499,12 +561,13 @@ class PictureView implements NodeView, Floating {
     e.stopPropagation()
     const x0 = e.clientX, y0 = e.clientY
     const { focusX: fx, focusY: fy } = this.attrs
-    const r = this.img.getBoundingClientRect()
+    const r = this.frame.getBoundingClientRect()
+    const box = this.box()
     const move = (ev: PointerEvent) => {
       // Dragging the picture right reveals its left part → focus moves left.
       const nx = Math.max(0, Math.min(100, fx - ((ev.clientX - x0) / r.width) * 100))
       const ny = Math.max(0, Math.min(100, fy - ((ev.clientY - y0) / r.height) * 100))
-      this.img.style.objectPosition = `${nx}% ${ny}%`
+      this.drawImg({ ...this.attrs, focusX: nx, focusY: ny }, box)
     }
     const up = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move)
@@ -656,23 +719,39 @@ class PictureView implements NodeView, Floating {
     // Which edges this handle moves: ±1 per axis, 0 = that axis stays.
     const dx = corner.includes('w') ? -1 : corner.includes('e') ? 1 : 0
     const dy = corner.includes('n') ? -1 : corner.includes('s') ? 1 : 0
-    const vs = this.attrs.vshape
-    const crop = !!vs && cropMode && !isLine(vs.k)
-    const full = vs ? fullSize(vs, start.w, start.h) : null
-    const c0 = vs?.crop || { l: 0, t: 0, r: 0, b: 0 }
+    const a0 = this.attrs
+    const vs = a0.vshape
+    const crop = this.cropping() && (!!vs || !!this.natural)
+    // The full (uncropped) size and the crop to start from. A picture's aspect / circle crop and
+    // focal point become part of its free crop, so cropping starts from exactly what is shown.
+    let full: { fw: number; fh: number } | null = null
+    let c0: ImgCrop = vs?.crop || { l: 0, t: 0, r: 0, b: 0 }
+    if (vs) full = fullSize(vs, start.w, start.h)
+    else if (crop) {
+      const r = picRect(a0, start, this.natural!)
+      full = { fw: r.w, fh: r.h }
+      c0 = { l: -r.x / r.w, t: -r.y / r.h, r: 1 - (start.w - r.x) / r.w, b: 1 - (start.h - r.y) / r.h }
+    }
     // On a rotated picture, the pointer's movement in the picture's own (unrotated) axes.
     const rad = (normRotate(this.attrs.rotate) * Math.PI) / 180, cos = Math.cos(rad), sin = Math.sin(rad)
     const local = (ev: PointerEvent) => { const mx = ev.clientX - x0, my = ev.clientY - y0; return { mx: mx * cos + my * sin, my: -mx * sin + my * cos } }
-    // Shapes resize freely (Shift keeps the proportions); pictures always keep theirs.
-    const calc = (ev: PointerEvent): { w: number; h: number; v?: VShape } => {
+    // Corners keep the proportions (a shape's corner with Shift: free); a shape's side handles stretch it.
+    const minW = 24, minH = vs && isLine(vs.k) ? 12 : 16
+    const calc = (ev: PointerEvent): { w: number; h: number; v?: VShape; c?: ImgCrop } => {
       const { mx, my } = local(ev)
-      let w = dx ? Math.round(Math.max(24, Math.min(colW, start.w + (dx * mx) / zoom))) : start.w
-      let h = dy ? Math.round(Math.max(vs && isLine(vs.k) ? 12 : 16, Math.min(maxH, start.h + (dy * my) / zoom))) : start.h
-      if (!vs) { if (!dx) w = Math.round(h / ratio); w = Math.min(w, Math.floor(maxH / ratio)); return { w, h: Math.round(w * ratio) } }
-      if (!crop) {
-        if (ev.shiftKey) { if (dx) h = Math.round(w * ratio); else w = Math.round(h / ratio) }
-        return { w, h, v: vs }
+      let w = dx ? Math.round(Math.max(minW, Math.min(colW, start.w + (dx * mx) / zoom))) : start.w
+      let h = dy ? Math.round(Math.max(minH, Math.min(maxH, start.h + (dy * my) / zoom))) : start.h
+      const keep = !crop && (!vs || (dx && dy && !ev.shiftKey))
+      if (keep) {
+        // The pointer's movement along the box's diagonal (or the one axis a side handle moves) scales both sides.
+        const s = dx && dy ? 1 + (dx * mx * start.w + dy * my * start.h) / (start.w * start.w + start.h * start.h) / zoom
+          : dx ? w / start.w : h / start.h
+        const lo = Math.max(minW / start.w, minH / start.h), hi = Math.min(colW / start.w, maxH / start.h)
+        const k = Math.max(Math.min(lo, hi), Math.min(hi, s))
+        w = Math.round(start.w * k); h = Math.max(1, Math.round(w * ratio))
+        return vs ? { w, h, v: vs } : { w, h }
       }
+      if (vs && !crop) return { w, h, v: vs }
       // Cropping: the full shape keeps its size; the dragged edge cuts into it (or uncovers it again).
       const { fw, fh } = full!
       const c = { ...c0 }
@@ -682,26 +761,39 @@ class PictureView implements NodeView, Floating {
       if (dy > 0) c.b = clampC(1 - c.t - h / fh, 0.95 - c.t)
       if (dy < 0) c.t = clampC(1 - c.b - h / fh, 0.95 - c.b)
       w = Math.round(fw * (1 - c.l - c.r)); h = Math.round(fh * (1 - c.t - c.b))
+      if (!vs) return { w, h, c }
       const nv: VShape = { ...vs }
       if (hasCrop(c)) nv.crop = c; else delete nv.crop
       return { w, h, v: nv }
     }
     // On a pinned picture the opposite corner / edge stays where it is, as in Word.
     const shift = (w: number, h: number) => ({ x: pinned && dx < 0 ? start.w - w : 0, y: pinned && dy < 0 ? start.h - h : 0 })
-    const move = (ev: PointerEvent) => {
-      const { w, h, v } = calc(ev)
-      this.img.style.width = `${w}px`
-      this.img.style.height = `${h}px`
-      if (v) this.img.src = shapeSrc(v, w, h)
+    // A cropped picture: the crop alone, no aspect / focal point / circle (an ellipse looks the same).
+    const cropped = (c: ImgCrop): Partial<ImgAttrs> => ({ crop: parseImgCrop(c), aspect: null, focusX: 50, focusY: 50, ...(a0.shape === 'circle' ? { shape: 'ellipse' as ImgShape } : {}) })
+    // While dragging, a shape's picture is only stretched: drawing it again on every move would load a
+    // new image each time, and every load lays the document out again (the flicker). Redrawn on release.
+    let last: PointerEvent | null = null, frame = 0
+    const draw = () => {
+      frame = 0
+      if (!last) return
+      const { w, h, v, c } = calc(last)
+      const a = c ? { ...a0, ...cropped(c) } : v ? { ...a0, vshape: v } : a0
+      this.drawImg(a, { w, h }, !!v)
+      const sl = shadowLayerStyles(a, { w, h })
+      if (sl) { this.shadow.setAttribute('style', sl.outer); (this.shadow.firstChild as HTMLElement).setAttribute('style', sl.inner) }
       const s = shift(w, h)
       this.el.style.transform = s.x || s.y ? `translate(${s.x}px, ${s.y}px)` : ''
     }
+    const move = (ev: PointerEvent) => { last = ev; if (!frame) frame = requestAnimationFrame(draw) }
     const up = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      cancelAnimationFrame(frame)
       this.el.style.transform = ''
-      const { w, h, v } = calc(ev)
-      const patch: Partial<ImgAttrs> = v ? { width: w, height: h, vshape: v, src: shapeSrc(v, w, h) } : { width: w, height: h }
+      if (ev.type !== 'pointerup') { this.render(); return }
+      const { w, h, v, c } = calc(ev)
+      const patch: Partial<ImgAttrs> = v ? { width: w, height: h, vshape: v, src: shapeSrc(v, w, h) } : c ? { width: w, height: h, ...cropped(c) } : { width: w, height: h }
       const s = shift(w, h)
       const a = this.attrs
       if (s.x && a.x != null) patch.x = Math.max(0, Math.round(a.x + s.x))
@@ -710,6 +802,7 @@ class PictureView implements NodeView, Floating {
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
   }
 
   update(node: PMNode) {
@@ -821,6 +914,7 @@ export const Picture = Image.extend({
       page: attr('page', null, (v) => (v === '' || !Number.isInteger(Number(v)) ? null : Number(v))),
       vshape: attr('vshape', null, parseVShape),
       rotate: attr('rotate', 0, normRotate),
+      crop: attr('crop', null, parseImgCrop),
       // One style attribute for HTML export / clipboard, computed from all of the above.
       _style: {
         default: null,
@@ -843,6 +937,7 @@ export const Picture = Image.extend({
           if (a.page != null) out['data-page'] = String(a.page)
           if (a.rotate) out['data-rotate'] = String(normRotate(a.rotate))
           if (a.vshape) out['data-vshape'] = JSON.stringify(a.vshape)
+          if (hasImgCrop(a.crop)) out['data-crop'] = JSON.stringify(a.crop)
           return out
         },
       },
@@ -878,7 +973,7 @@ export const Picture = Image.extend({
 }).configure({ inline: true, allowBase64: true, resize: false })
 
 /** Is the picture "baked" (needs pixel processing for export)? */
-export const needsBake = (a: ImgAttrs) => a.shape !== 'rect' || !!a.aspect || (a.shadow && a.shadow !== 'none')
+export const needsBake = (a: ImgAttrs) => a.shape !== 'rect' || !!a.aspect || (a.shadow && a.shadow !== 'none') || (!a.vshape && hasImgCrop(a.crop))
 
 /**
  * Render the picture exactly as displayed (crop, shape, shadow) into a PNG.
@@ -917,13 +1012,11 @@ export async function bakePicture(a: ImgAttrs, img: HTMLImageElement): Promise<{
     g.fill(path)
     g.restore()
   }
-  // object-fit: cover with focal point.
-  const s = Math.max(W / img.naturalWidth, H / img.naturalHeight)
-  const dw = img.naturalWidth * s, dh = img.naturalHeight * s
-  const dx = x0 + (W - dw) * (a.focusX / 100), dy = y0 + (H - dh) * (a.focusY / 100)
+  // The crop, covering the box at the focal point — as the editor draws it.
+  const r = picRect(a, box, { w: img.naturalWidth, h: img.naturalHeight })
   g.save()
   g.clip(path)
-  g.drawImage(img, dx, dy, dw, dh)
+  g.drawImage(img, x0 + r.x, y0 + r.y, r.w, r.h)
   g.restore()
   return { dataUrl: c.toDataURL('image/png'), w: box.w + pad * 2, h: box.h + pad * 2 }
 }
