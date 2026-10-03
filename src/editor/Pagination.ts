@@ -66,6 +66,8 @@ interface Spacer {
   pad?: boolean
   padBase?: number
   side?: 'odd' | 'even'
+  /** Pushes the text after a top-and-bottom picture, whose carrier (floats.ts) is at the same position: drawn after it. */
+  afterPic?: boolean
 }
 
 const CONTAINERS = new Set(['bulletList', 'orderedList', 'listItem', 'taskList', 'taskItem', 'blockquote'])
@@ -95,8 +97,10 @@ function buildDecorations(doc: PMNode, spacers: Spacer[]) {
       continue
     }
     decos.push(Decoration.widget(s.pos, () => makeSpacerDom(s), {
-      side: -1,
-      key: `pg-${s.pos}-${Math.round(s.height)}-${s.block ? 'b' : 'i'}${s.side || ''}`,
+      // Before a picture's carrier at the same position (side -0.5), which then moves with the line —
+      // except below a top-and-bottom picture, which stays on its page.
+      side: s.afterPic ? -0.25 : -1,
+      key: `pg-${s.pos}-${Math.round(s.height)}-${s.block ? 'b' : 'i'}${s.side || ''}${s.afterPic ? 'a' : ''}`,
       ignoreSelection: true,
       marks: [],
     }))
@@ -174,7 +178,7 @@ function collectUnits(view: EditorView, f: Frame): Unit[] {
         keepNext: name === 'heading' || !!child.attrs.keepNext,
         breakBefore: !!child.attrs.pageBreakBefore,
         // Pictures are drawn where they sit on the page (floats.ts), not where their node is.
-        hasFloat: child.inlineContent && !!el.querySelector('.wpic[data-wrap="square"]'),
+        hasFloat: child.inlineContent && !!el.querySelector('.wpic[data-wrap="square"]:not([data-free="1"])'),
       })
     })
   }
@@ -203,7 +207,8 @@ function measureLines(u: Unit, f: Frame): Line[] {
   // Pictures: in-line / top-and-bottom pictures occupy a line; square-wrapped ones float.
   for (const pic of u.el.querySelectorAll<HTMLElement>('.wpic')) {
     const r = pic.getBoundingClientRect()
-    if (!r.height) continue
+    // Drawn in front of the text (floats.ts): it takes no room.
+    if (!r.height || pic.dataset.free === '1') continue
     const box = { t: toCol(f, r.top), b: toCol(f, r.bottom) }
     // A float sits `margin-top` below the line it is anchored on (its free vertical offset).
     const pin = pic.dataset.pinned === '1'
@@ -331,6 +336,7 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
       pad: k === 0,
       padBase: k === 0 ? u.padTop : undefined,
       side: k === 0 ? forceSide : undefined,
+      afterPic: k > 0 && !!u.lines![k - 1].pic,
     })
     shift += h
   }
@@ -452,7 +458,13 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
   }
 
   if (trace) (window as any).__pgTraceOut = trace
-  const pages = Math.max(1, pageOf(Math.max(0, lastBottom - 1)) + 1, forcePage >= 0 ? forcePage + 2 : 1)
+  // A picture pinned to a page past the text keeps that page (floats.ts).
+  let pinned = 0
+  view.state.doc.descendants((n) => {
+    if (n.type.name === 'image' && n.attrs.wrap && n.attrs.page >= 0) pinned = Math.max(pinned, n.attrs.page + 1)
+    return n.isBlock
+  })
+  const pages = Math.max(1, pageOf(Math.max(0, lastBottom - 1)) + 1, forcePage >= 0 ? forcePage + 2 : 1, pinned)
   return { spacers, pages, headings }
 }
 
@@ -491,7 +503,7 @@ function reconcile(view: EditorView, spacers: Spacer[], apply: (s: Spacer[]) => 
 function sameSpacers(a: Spacer[], b: Spacer[]) {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) {
-    if (a[i].pos !== b[i].pos || a[i].block !== b[i].block || a[i].side !== b[i].side || !!a[i].top !== !!b[i].top || !!a[i].pad !== !!b[i].pad || Math.abs(a[i].height - b[i].height) > 0.5) return false
+    if (a[i].pos !== b[i].pos || a[i].block !== b[i].block || a[i].side !== b[i].side || !!a[i].afterPic !== !!b[i].afterPic || !!a[i].top !== !!b[i].top || !!a[i].pad !== !!b[i].pad || Math.abs(a[i].height - b[i].height) > 0.5) return false
   }
   return true
 }
@@ -539,14 +551,18 @@ export const Pagination = Extension.create({
               return
             }
             const t0 = performance.now()
+            layoutStore.layoutRun++
             // Floating pictures are placed on the paginated text, which then flows around them:
             // repeat until nothing moves (usually one or two rounds).
-            let round = 0
+            let round = 0, settling = 0
             for (; ; round++) {
               paginate()
+              layoutStore.pinning = false
               if (!runPasses(view)) break
+              // Rounds that pinned an imported picture (one per round) don't count: they make progress.
+              if (!layoutStore.pinning) settling++
               // Not settled: at least leave the text paginated around the pictures as they are now.
-              if (round === 5) { paginate(); break }
+              if (settling === 6 || round === 500) { paginate(); break }
             }
             layoutStore.lastLayoutRounds = round + 1
             layoutStore.lastLayoutMs = performance.now() - t0

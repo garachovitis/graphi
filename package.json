@@ -26,6 +26,7 @@
     "@capacitor/status-bar": "^8.0.3",
     "@fontsource/arimo": "^5.3.0",
     "@fontsource/carlito": "^5.3.0",
+    "@huggingface/transformers": "^4.3.0",
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-highlight": "^3.31.3",
     "@tiptap/extension-image": "^3.31.3",
@@ -120,6 +121,9 @@
       ],
       "icon": "build/icon.png",
       "darkModeSupport": true,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Το Graphi χρησιμοποιεί το μικρόφωνο για την Υπαγόρευση· η φωνή επεξεργάζεται μόνο σε αυτή τη συσκευή. / Graphi uses the microphone for Dictate; your voice is processed only on this device."
+      },
       "identity": "-",
       "hardenedRuntime": false
     },

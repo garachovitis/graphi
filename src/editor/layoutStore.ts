@@ -13,6 +13,10 @@ class LayoutStore {
   lastLayoutMs = 0
   /** Rounds the last layout took to place floating pictures (1 = settled at once), for diagnostics. */
   lastLayoutRounds = 0
+  /** Counts layouts (each of one or more rounds). */
+  layoutRun = 0
+  /** Set by a round that pinned an imported picture to its page (floats.ts): the layout goes on. */
+  pinning = false
   /** File ▸ Εκπαίδευση: position of the page break between the sample and the learner's
    *  pages. A table of contents then lists only the headings on its own side. */
   lessonSplit: number | null = null

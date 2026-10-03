@@ -28,6 +28,11 @@ interface NativeBridge {
   recent(): Promise<string[]>
   openExternal(u: string): Promise<void>
   fetchImage(u: string): Promise<FetchedImage>
+  /** The dictation model, served by the main process (see electron/model.cjs). */
+  modelHost?: string
+  modelMissing?(files: string[]): Promise<string[]>
+  allowModelDownload?(): Promise<void>
+  removeModel?(): Promise<void>
   reveal(p: string): Promise<void>
   onMenu(cb: (cmd: string) => void): () => void
   onFileOpened(cb: (f: OpenedFile) => void): () => void
@@ -38,6 +43,7 @@ interface NativeBridge {
 }
 
 const native: NativeBridge | undefined = (window as any).grafiNative
+const TRANSFORMERS_CACHE = 'transformers-cache'
 
 /** Page geometry handed to native printers (mm) plus header/footer templates. */
 export interface PageSpec {
@@ -272,6 +278,30 @@ export const platform = {
     if (!res.ok) throw new Error(String(res.status))
     const blob = await res.blob()
     return { data: new Uint8Array(await blob.arrayBuffer()), type: blob.type }
+  },
+  /**
+   * Where the dictation model's files live. Desktop: the main process keeps them on disk and downloads
+   * them only after `allow()` (the page itself has no network). Web: the browser's Cache Storage,
+   * filled by transformers.js. `files` are repo paths, `url(f)` their Hugging Face address.
+   */
+  speechModel: {
+    host: native?.modelHost ?? null,
+    async missing(files: string[], url: (f: string) => string): Promise<string[]> {
+      if (native?.modelMissing) return native.modelMissing(files)
+      try {
+        const cache = await caches.open(TRANSFORMERS_CACHE)
+        const hits = await Promise.all(files.map((f) => cache.match(url(f))))
+        return files.filter((_, i) => !hits[i])
+      } catch { return files } // no Cache Storage: downloaded on every use
+    },
+    allow: async () => { await native?.allowModelDownload?.() },
+    async remove(files: string[], url: (f: string) => string) {
+      if (native?.removeModel) return native.removeModel()
+      try {
+        const cache = await caches.open(TRANSFORMERS_CACHE)
+        await Promise.all(files.map((f) => cache.delete(url(f))))
+      } catch { /* nothing cached */ }
+    },
   },
   reveal: (p: string) => native?.reveal(p),
   onMenu: (cb: (cmd: string) => void) => native?.onMenu(cb) ?? (() => {}),

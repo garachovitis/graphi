@@ -6,6 +6,7 @@ import type { Editor, JSONContent } from '@tiptap/core'
 import { editorExtensions } from '../editor/extensions'
 import { paginationConfig, requestRelayout } from '../editor/Pagination'
 import { layoutStore } from '../editor/layoutStore'
+import { exportDoc } from '../editor/floats'
 import { DEFAULT_SETTINGS, mmToPx, normalizeSettings, type DocSettings } from '../model/settings'
 import { applyDesign } from '../model/styles'
 import { userDefaultDesign, type DocTheme } from '../model/themes'
@@ -364,7 +365,8 @@ export function App() {
     setTrainingRun((n) => n + 1) // restarting the same level starts its coach afresh
   }, [editor, loadInto, dirty, file])
 
-  const currentJson = (): JSONContent => editor!.getJSON()
+  // Each pinned picture goes in a paragraph on its page: Word and LibreOffice place it on its paragraph's page.
+  const currentJson = (): JSONContent => exportDoc(editor!.view).toJSON()
 
   const saveAs = useCallback(async (kind: Kind): Promise<boolean> => {
     if (!editor) return false

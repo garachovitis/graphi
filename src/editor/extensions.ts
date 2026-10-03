@@ -6,7 +6,7 @@ import TextAlign from '@tiptap/extension-text-align'
 import Highlight from '@tiptap/extension-highlight'
 import Subscript from '@tiptap/extension-subscript'
 import Superscript from '@tiptap/extension-superscript'
-import { Table, TableRow } from '@tiptap/extension-table'
+import { TableRow } from '@tiptap/extension-table'
 import { TaskList, TaskItem } from '@tiptap/extension-list'
 import { CharacterCount, Placeholder, Gapcursor, Dropcursor } from '@tiptap/extensions'
 import Typography from '@tiptap/extension-typography'
@@ -14,6 +14,7 @@ import type { AnyExtension } from '@tiptap/core'
 import { ParagraphFormat } from './ParagraphFormat'
 import { PageBreak, TableOfContents, WTableCell, WTableHeader } from './nodes'
 import { Picture } from './image'
+import { WTable, TableMove } from './table'
 import { SearchReplace } from './SearchReplace'
 import { Proofing } from './Proofing'
 import { Pagination } from './Pagination'
@@ -41,7 +42,7 @@ export function schemaExtensions(): AnyExtension[] {
     Highlight.configure({ multicolor: true }),
     Subscript,
     Superscript,
-    Table.configure({ resizable: true, lastColumnResizable: true, allowTableNodeSelection: true, cellMinWidth: 24 }),
+    WTable,
     TableRow,
     WTableHeader,
     WTableCell,
@@ -67,6 +68,7 @@ export function editorExtensions(): AnyExtension[] {
     SearchReplace,
     Proofing,
     WordShortcuts,
+    TableMove,
     Pagination,
   ]
 }

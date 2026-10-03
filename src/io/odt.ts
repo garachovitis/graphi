@@ -7,10 +7,26 @@ import { normalizeSettings, detectPaper, type DocSettings } from '../model/setti
 import { DEFAULT_FONT, PARA_STYLES, type ParaStyle } from '../model/styles'
 import { fontSizeToPt, colorHex } from '../editor/units'
 import { tableHeaderFill } from '../model/docCss'
+import { bakeTableStyle, tableStyle } from '../model/tableStyles'
 import { captionNumbers, collectHeadingsJson, escapeXml, escapeHtml } from './common'
 import { bytesToDataUrl } from './images'
 import { anchoredAtStart, pictureAttrs, pictureKey, preparePictures } from './pictures'
-import { MIN_Y, TEXT_DISTANCE } from '../editor/image'
+import { MIN_Y, TEXT_DISTANCE, normRotate, type ImgAttrs } from '../editor/image'
+
+/**
+ * ODF rotates a frame about its top-left corner (counter-clockwise, radians); turn it about its
+ * centre, as Graphi does, by translating it back. The svg:x / svg:y position moves into the transform.
+ */
+function rotation(a: ImgAttrs, pic: { w: number; h: number }) {
+  const d = normRotate(a.rotate)
+  if (!d) return ''
+  const th = (d * Math.PI) / 180, cos = Math.cos(th), sin = Math.sin(th)
+  const x0 = a.wrap && a.x != null ? a.x : 0, y0 = a.wrap && a.y ? a.y : 0
+  const cx = pic.w / 2, cy = pic.h / 2
+  const mm = (px: number) => `${((px * 25.4) / 96).toFixed(2)}mm`
+  const tx = x0 + cx - (cx * cos - cy * sin), ty = y0 + cy - (cx * sin + cy * cos)
+  return ` draw:transform="rotate (${(-th).toFixed(6)}) translate (${mm(tx)} ${mm(ty)})"`
+}
 import { t, fmtDate } from '../i18n'
 
 const NS = [
@@ -124,16 +140,19 @@ function inlineXml(n: JSONContent, ctx: Ctx): string {
         if (a.wrap) {
           // At the paragraph's start our line-relative `y` is paragraph-relative; further in, the
           // frame is anchored to its character and measured from it (≈ the top of its line).
-          const atStart = anchoredAtStart(inline, index)
+          // Pinned to its page (editor/floats.ts): from the page's text area — its node is in a paragraph on that page.
+          const pinned = a.page != null && a.page >= 0
+          const atStart = pinned || anchoredAtStart(inline, index)
+          const rel = pinned ? 'page-content' : atStart ? 'paragraph' : 'char'
           anchor = atStart ? 'paragraph' : 'char'
           const d = TEXT_DISTANCE[a.wrap]
           const pt = (px: number) => `${((px * 72) / 96).toFixed(2)}pt`
           const hpos = a.x != null ? 'from-left' : a.wrap === 'square' ? (a.align === 'right' ? 'right' : 'left') : a.align === 'left' ? 'left' : a.align === 'right' ? 'right' : 'center'
           // Square: text on one side, as in Grafi — left of a right-hand picture, right of a left-hand one.
           const wrap = a.wrap === 'topBottom' ? 'none' : a.align === 'right' ? 'left' : 'right'
-          style = ctx.auto.get('graphic', 'fr', `<style:graphic-properties style:wrap="${wrap}" style:number-wrapped-paragraphs="no-limit" style:horizontal-pos="${hpos}" style:horizontal-rel="paragraph" style:vertical-pos="${a.y ? 'from-top' : 'top'}" style:vertical-rel="${atStart ? 'paragraph' : 'char'}" fo:margin-top="${pt(d.top)}" fo:margin-bottom="${pt(d.bottom)}" fo:margin-left="${pt(d.side)}" fo:margin-right="${pt(d.side)}" fo:border="none"/>`, 'Graphics')
+          style = ctx.auto.get('graphic', 'fr', `<style:graphic-properties style:wrap="${wrap}" style:number-wrapped-paragraphs="no-limit" style:horizontal-pos="${hpos}" style:horizontal-rel="${pinned ? 'page-content' : 'paragraph'}" style:vertical-pos="${a.y ? 'from-top' : 'top'}" style:vertical-rel="${rel}" fo:margin-top="${pt(d.top)}" fo:margin-bottom="${pt(d.bottom)}" fo:margin-left="${pt(d.side)}" fo:margin-right="${pt(d.side)}" fo:border="none"/>`, 'Graphics')
         }
-        x = `<draw:frame draw:style-name="${style}" text:anchor-type="${anchor}"${a.wrap && a.x != null ? ` svg:x="${mm(a.x)}"` : ''}${a.wrap && a.y ? ` svg:y="${mm(a.y)}"` : ''} svg:width="${mm(pic.w)}" svg:height="${mm(pic.h)}" draw:z-index="0"><draw:image xlink:href="${pic.path}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad" draw:mime-type="${pic.mime}"/>${a.alt ? `<svg:desc>${escapeXml(a.alt)}</svg:desc>` : ''}</draw:frame>`
+        x = `<draw:frame draw:style-name="${style}" text:anchor-type="${anchor}"${a.wrap && a.x != null ? ` svg:x="${mm(a.x)}"` : ''}${a.wrap && a.y ? ` svg:y="${mm(a.y)}"` : ''} svg:width="${mm(pic.w)}" svg:height="${mm(pic.h)}"${rotation(a, pic)} draw:z-index="0"><draw:image xlink:href="${pic.path}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad" draw:mime-type="${pic.mime}"/>${a.alt ? `<svg:desc>${escapeXml(a.alt)}</svg:desc>` : ''}</draw:frame>`
       }
     }
     const link = c.marks?.find((m) => m.type === 'link')
@@ -238,6 +257,8 @@ function listXml(n: JSONContent, ctx: Ctx, top: boolean): string {
 }
 
 function tableXml(n: JSONContent, ctx: Ctx): string {
+  const style = n.attrs?.tableStyle as string | null
+  n = bakeTableStyle(n)
   const name = `Table${++ctx.tableN}`
   const rows = n.content || []
   const first = rows[0]?.content || []
@@ -280,7 +301,7 @@ function tableXml(n: JSONContent, ctx: Ctx): string {
   const headerRows = rowXml.filter((r, i) => r.header && rowXml.slice(0, i).every((x) => x.header)).length
   const body = (headerRows ? `<table:table-header-rows>${rowXml.slice(0, headerRows).map((r) => r.xml).join('')}</table:table-header-rows>` : '') +
     rowXml.slice(headerRows).map((r) => r.xml).join('')
-  return `<table:table table:name="${name}" table:style-name="${name}">${colMm.map((_, i) => `<table:table-column table:style-name="${name}.C${i + 1}"/>`).join('')}${body}</table:table>`
+  return `<table:table table:name="${name}" table:style-name="${name}"${style ? ` table:template-name="Grafi-${style}"` : ''}>${colMm.map((_, i) => `<table:table-column table:style-name="${name}.C${i + 1}"/>`).join('')}${body}</table:table>`
 }
 
 function styleXml(s: ParaStyle, name: string, display: string, extra = ''): string {
@@ -537,7 +558,20 @@ export async function importOdt(data: Uint8Array): Promise<{ html: string; setti
           // A one-sided wrap names the side the text is on; the picture is on the other.
           const align = wrap === 'square' && wrapAttr === 'left' ? 'right' : wrap === 'square' && wrapAttr === 'right' ? 'left'
             : hpos === 'left' || hpos === 'from-left' ? 'left' : hpos === 'right' ? 'right' : wrap === 'square' ? 'left' : 'center'
-          const html = src && `<img src="${src}"${cm(e.getAttribute('svg:width')) ? ` width="${cm(e.getAttribute('svg:width'))}"` : ''}${cm(e.getAttribute('svg:height')) ? ` height="${cm(e.getAttribute('svg:height'))}"` : ''}${wrap ? ` data-wrap="${wrap}" data-align="${align}"` : ''}${wrap && hpos === 'from-left' && cm(e.getAttribute('svg:x')) != null ? ` data-x="${cm(e.getAttribute('svg:x'))}"` : ''}${wrap && gp?.getAttribute('style:vertical-pos') === 'from-top' && (cm(e.getAttribute('svg:y')) ?? 0) >= MIN_Y ? ` data-y="${cm(e.getAttribute('svg:y'))}"` : ''}>`
+          // draw:transform="rotate(α) translate(x y)": α in radians, counter-clockwise.
+          const rm = /rotate\s*\(\s*(-?[\d.e-]+)\s*\)/.exec(e.getAttribute('draw:transform') || '')
+          const rot = rm ? normRotate((-parseFloat(rm[1]) * 180) / Math.PI) : 0
+          // Positioned on the page (as Graphi saves pinned pictures): pinned to the page its paragraph
+          // lands on (data-page -1, see editor/floats.ts); from the page's edge, made relative to its
+          // margins once they are known (data-x-edge / data-y-edge, see below).
+          const vrel = gp?.getAttribute('style:vertical-rel'), hrel = gp?.getAttribute('style:horizontal-rel')
+          const onPage = !!wrap && (vrel === 'page-content' || vrel === 'page' || anchorType === 'page')
+          const sx = cm(e.getAttribute('svg:x')), sy = cm(e.getAttribute('svg:y'))
+          const xAttr = !wrap || hpos !== 'from-left' || sx == null ? '' : onPage && hrel === 'page' ? ` data-x-edge="${sx}"` : ` data-x="${sx}"`
+          const yAttr = !wrap || gp?.getAttribute('style:vertical-pos') !== 'from-top' ? ''
+            : onPage ? (vrel === 'page' || anchorType === 'page' ? ` data-y-edge="${sy ?? 0}"` : ` data-y="${sy ?? 0}"`)
+            : (sy ?? 0) >= MIN_Y ? ` data-y="${sy}"` : ''
+          const html = src && `<img src="${src}"${rot ? ` data-rotate="${rot}"` : ''}${cm(e.getAttribute('svg:width')) ? ` width="${cm(e.getAttribute('svg:width'))}"` : ''}${cm(e.getAttribute('svg:height')) ? ` height="${cm(e.getAttribute('svg:height'))}"` : ''}${wrap ? ` data-wrap="${wrap}" data-align="${align}"` : ''}${onPage ? ' data-page="-1"' : ''}${xAttr}${yAttr}>`
           if (html && wrap && anchorType === 'paragraph') hoisted.push(html)
           else if (html) out += html
           else if (img) warnings.add(t('io.odtImages'))
@@ -620,7 +654,8 @@ export async function importOdt(data: Uint8Array): Promise<{ html: string; setti
             }
             rows += `<tr>${cells}</tr>`
           }
-          out += `<table><tbody>${rows}</tbody></table>`
+          const ts = tableStyle(/^Grafi-(.+)$/.exec(n.getAttribute('table:template-name') || '')?.[1])
+          out += `<table${ts ? ` data-table-style="${ts.id}"` : ''}><tbody>${rows}</tbody></table>`
           break
         }
         case 'text:table-of-content':
@@ -691,5 +726,10 @@ export async function importOdt(data: Uint8Array): Promise<{ html: string; setti
     s.title = md.getElementsByTagName('dc:title')[0]?.textContent || ''
     s.author = md.getElementsByTagName('dc:creator')[0]?.textContent || md.getElementsByTagName('meta:initial-creator')[0]?.textContent || ''
   }
-  return { html, settings: s, warnings: [...warnings] }
+  // Pictures positioned from the page's edge: from its margins now that they are known.
+  const px = (mmv: number) => (mmv * 96) / 25.4
+  const body = html
+    .replace(/ data-x-edge="(-?\d+)"/g, (_, v) => ` data-x="${Math.max(0, Math.round(+v - px(s.margins.left)))}"`)
+    .replace(/ data-y-edge="(-?\d+)"/g, (_, v) => ` data-y="${Math.max(0, Math.round(+v - px(s.margins.top)))}"`)
+  return { html: body, settings: s, warnings: [...warnings] }
 }

@@ -70,5 +70,56 @@ function verify() {
   return { checked: n, badCount: bad.length, bad: bad.slice(0, 5), orphanHeadings, tablesSplit, pages: w().layoutStore.pageCount, sheets: document.querySelectorAll('.page-sheet').length }
 }
 
-Object.assign(window, { __load: load, __verify: verify })
+/**
+ * Floating pictures (floats.ts): each one's pinned spot (`page/x/y`, x empty = aligned) and where it is
+ * really drawn (`page/x/y/in|OUT` of its page's text area), plus the text check and how the layout settled.
+ */
+function floats() {
+  const s = w().settings
+  const mm = (v: number) => (v * 96) / 25.4
+  const P = mm(s.height) + 20, C = mm(s.height - s.margins.top - s.margins.bottom)
+  const pm = w().editor.view.dom as HTMLElement
+  const r = pm.getBoundingClientRect(), z = r.height / pm.offsetHeight
+  const attrs: string[] = []
+  w().editor.state.doc.descendants((n: any) => { if (n.type.name === 'image' && n.attrs.wrap) attrs.push([n.attrs.page, n.attrs.x, n.attrs.y].join('/')) })
+  const drawn = [...pm.querySelectorAll('.wpic-carrier .wpic')].map((el) => {
+    const b = el.getBoundingClientRect()
+    const top = (b.top - r.top) / z, left = (b.left - r.left) / z, pg = Math.floor((top + 0.5) / P), y = top - pg * P
+    return [pg, Math.round(left * 10) / 10, Math.round(y * 10) / 10, y >= -0.5 && y + b.height / z <= C + 0.5 ? 'in' : 'OUT'].join('/')
+  })
+  const v = verify()
+  return { attrs: attrs.join('  '), drawn: drawn.join('  '), bad: v.badCount, pages: v.pages, rounds: w().layoutStore.lastLayoutRounds, ms: Math.round(w().layoutStore.lastLayoutMs) }
+}
+
+/** `n` paragraphs with a square-wrapped picture (in the 4th) and a top-and-bottom one (in the 9th), caret at the start. */
+async function loadFloats(n = 30) {
+  const svg = 'data:image/svg+xml;utf8,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="140"><rect width="200" height="140" fill="#0f766e"/></svg>')
+  const content = Array.from({ length: n }, (_, i) => {
+    const c: any[] = [{ type: 'text', text: `${i + 1}. ` + PARA.repeat(2) }]
+    if (i === 3) c.unshift({ type: 'image', attrs: { src: svg, width: 200, height: 140, wrap: 'square', align: 'right' } })
+    if (i === 8) c.unshift({ type: 'image', attrs: { src: svg, width: 300, height: 100, wrap: 'topBottom', align: 'center' } })
+    return { type: 'paragraph', content: c }
+  })
+  w().editor.commands.setContent({ type: 'doc', content })
+  w().editor.commands.setTextSelection(1)
+  await new Promise((r) => setTimeout(r, 1000))
+  return floats()
+}
+
+/** Drags floating picture `i` (document order of the drawn pictures) by (dx, dy) page px, as the mouse would. */
+async function dragPic(i: number, dx: number, dy: number) {
+  const el = document.querySelectorAll<HTMLElement>('.wpic-carrier .wpic')[i]
+  el.scrollIntoView({ block: 'center' })
+  await new Promise((r) => setTimeout(r, 50))
+  const r = el.getBoundingClientRect(), z = r.width / el.offsetWidth
+  const x0 = r.left + r.width / 2, y0 = r.top + r.height / 2
+  const at = (x: number, y: number) => ({ bubbles: true, clientX: x, clientY: y, button: 0, pointerType: 'mouse', isPrimary: true, pointerId: 1 })
+  el.dispatchEvent(new PointerEvent('pointerdown', at(x0, y0)))
+  for (let k = 1; k <= 8; k++) window.dispatchEvent(new PointerEvent('pointermove', at(x0 + (dx * z * k) / 8, y0 + (dy * z * k) / 8)))
+  window.dispatchEvent(new PointerEvent('pointerup', at(x0 + dx * z, y0 + dy * z)))
+  await new Promise((r) => setTimeout(r, 400))
+  return floats()
+}
+
+Object.assign(window, { __load: load, __verify: verify, __floats: floats, __dragPic: dragPic, __loadFloats: loadFloats })
 export {}

@@ -4,6 +4,7 @@ import { fontStack, stylesCss, DEFAULT_FONT, lineHeightCss, PARA_STYLES, bodyFon
 import type { DocSettings, HFAlign } from './settings'
 import { themeVarsCss, currentTheme, tintShade } from './themes'
 import { t, fmtDate } from '../i18n'
+import { tableStylesCss } from './tableStyles'
 
 const S = '.doc-surface'
 
@@ -71,6 +72,7 @@ ${S} table{border-collapse:collapse;table-layout:fixed;width:100%;margin:0}
 ${S} td,${S} th{border:1px solid #7f8c8c;padding:2pt 5.4pt;vertical-align:top;position:relative;min-width:1em}
 ${S} th{background:${tableHeaderFill(th.colors.accent1)};font-weight:700;text-align:left}
 ${S} td > p,${S} th > p{margin:0}
+${tableStylesCss(S)}
 ${S} .toc{margin:0;padding:0 0 ${normal.spaceAfterPt}pt;user-select:none}
 ${S} .toc-title{font-family:${fontStack(headingStyle(1).font || bodyFont())};font-size:${headingStyle(1).sizePt}pt;color:${headingStyle(1).color || '#000'};font-weight:${headingStyle(1).bold ? 700 : 400};margin:0 0 6pt}
 ${S} .toc-entry{display:flex;align-items:baseline;gap:4px;margin:0 0 5pt;cursor:pointer}

@@ -14,8 +14,9 @@ import { DEFAULT_SETTINGS, detectPaper, mmToPx, normalizeSettings, twipToMm, typ
 import { DEFAULT_FONT, PARA_STYLES, fontStack, type ParaStyle } from '../model/styles'
 import { bytesToDataUrl } from './images'
 import { hoistToStart } from './pictures'
-import { MIN_Y, squareSide } from '../editor/image'
+import { MIN_Y, normRotate, squareSide } from '../editor/image'
 import { colorDistance, isHex, parseThemeRef, parseThemeXml, resolveColor, snapPct, themeVar, type DocTheme, type Slot } from '../model/themes'
+import { tableStyle, unbakeTableStyle } from '../model/tableStyles'
 import { t } from '../i18n'
 
 type El = Element
@@ -278,6 +279,8 @@ interface Ctx {
   paragraphAnchored: WeakSet<JSONContent>
   /** Square pictures Word wraps on both sides: the side is picked from the position once the column width is known. */
   sideByPosition: Set<JSONContent>
+  /** Pictures positioned from the page's edge: made relative to its margins once they are known. */
+  fromPageEdge: { node: JSONContent; h: boolean; v: boolean }[]
 }
 
 const MIME: Record<string, string> = {
@@ -527,6 +530,10 @@ function readImage(el: El, ctx: Ctx): JSONContent | null {
   let y: number | null = null
   let paragraphRelative = false
   let sideByPosition = false
+  // Positioned on the page (from its margins or edges, as Graphi saves pinned pictures): pinned to the
+  // page its paragraph lands on (page -1, see editor/floats.ts).
+  let page: number | null = null
+  let edgeH = false, edgeV = false
   const anchor = el.getElementsByTagName('wp:anchor')[0]
   if (anchor) {
     const has = (t: string) => anchor.getElementsByTagName(t).length > 0
@@ -542,6 +549,7 @@ function readImage(el: El, ctx: Ctx): JSONContent | null {
       const off = Number(posH.getElementsByTagName('wp:posOffset')[0]?.textContent || 0) / 9525
       const rel = posH.getAttribute('relativeFrom')
       if ((rel === 'column' || rel === 'margin') && off >= 0) x = Math.round(off)
+      else if (rel === 'page') { x = Math.round(off); edgeH = true }
       align = x != null || off < 40 ? 'left' : 'right'
     }
     if (wrap === 'square' && align === 'center') align = 'left'
@@ -554,15 +562,22 @@ function readImage(el: El, ctx: Ctx): JSONContent | null {
     // the anchor line; a paragraph-relative picture is moved to the paragraph's start by the caller).
     const posV = anchor.getElementsByTagName('wp:positionV')[0]
     const relV = posV?.getAttribute('relativeFrom')
+    const offV = Number(posV?.getElementsByTagName('wp:posOffset')[0]?.textContent || 0) / 9525
     if (relV === 'paragraph' || relV === 'line') {
-      const off = Number(posV!.getElementsByTagName('wp:posOffset')[0]?.textContent || 0) / 9525
-      if (off >= MIN_Y) y = Math.round(off)
+      if (offV >= MIN_Y) y = Math.round(offV)
+    } else if (relV === 'margin' || relV === 'page' || relV === 'topMargin') {
+      page = -1
+      y = Math.round(offV)
+      edgeV = relV !== 'margin'
     }
     paragraphRelative = relV !== 'line'
   }
   const docPr = el.getElementsByTagName('wp:docPr')[0]
   const alt = docPr?.getAttribute('descr') || docPr?.getAttribute('title') || null
-  const node: JSONContent = { type: 'image', attrs: { src, alt, title: null, width, height, wrap, align, x, y } }
+  // <a:xfrm rot> is in 60000ths of a degree, clockwise.
+  const rot = Number(el.getElementsByTagName('a:xfrm')[0]?.getAttribute('rot') || 0) / 60000
+  const node: JSONContent = { type: 'image', attrs: { src, alt, title: null, width, height, wrap, align, x, y, page, rotate: normRotate(rot) } }
+  if (edgeH || edgeV) ctx.fromPageEdge.push({ node, h: edgeH, v: edgeV })
   if (paragraphRelative) ctx.paragraphAnchored.add(node)
   if (sideByPosition) ctx.sideByPosition.add(node)
   return node
@@ -614,7 +629,9 @@ function readTable(tbl: El, ctx: Ctx): JSONContent {
     }
     if (cells.length) rows.push({ type: 'tableRow', content: cells })
   }
-  return { type: 'table', content: rows.length ? rows : [{ type: 'tableRow', content: [{ type: 'tableCell', content: [{ type: 'paragraph' }] }] }] }
+  const style = /^Grafi-(.+)$/.exec(val(child(child(tbl, 'w:tblPr'), 'w:tblStyle')) || '')?.[1]
+  const table: JSONContent = { type: 'table', attrs: { tableStyle: tableStyle(style)?.id ?? null }, content: rows.length ? rows : [{ type: 'tableRow', content: [{ type: 'tableCell', content: [{ type: 'paragraph' }] }] }] }
+  return unbakeTableStyle(table)
 }
 
 const CAPTION_RE = /^(Εικόνα|Σχήμα|Figure|Fig\.)\s*\d+\s*[:.–-]\s*|^(Πίνακας|Table)\s*\d+\s*[:.–-]\s*/
@@ -823,6 +840,7 @@ export async function importDocx(data: Uint8Array): Promise<ImportResult> {
     warnings: new Set(),
     paragraphAnchored: new WeakSet(),
     sideByPosition: new Set(),
+    fromPageEdge: [],
   }
   await loadMedia(ctx, 'word/document.xml', rels)
 
@@ -875,6 +893,11 @@ export async function importDocx(data: Uint8Array): Promise<ImportResult> {
 
   if (ctx.headingNumbers) s.headingNumbers = true
   const textWidth = mmToPx(s.width - s.margins.left - s.margins.right)
+  for (const { node, h, v } of ctx.fromPageEdge) {
+    const a = node.attrs!
+    if (v) a.y = Math.max(0, Math.round(a.y - mmToPx(s.margins.top)))
+    if (h && a.x != null) a.x = Math.max(0, Math.round(a.x - mmToPx(s.margins.left)))
+  }
   for (const n of ctx.sideByPosition) n.attrs!.align = squareSide(n.attrs!.x, n.attrs!.width ?? 0, textWidth)
   // The document keeps its Word theme (colours + fonts); styles and theme-coloured text follow it.
   if (theme.doc) s.theme = theme.doc

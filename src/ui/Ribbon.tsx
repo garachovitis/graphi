@@ -19,10 +19,12 @@ import { BULLET_FORMATS, NUMBER_FORMATS } from '../editor/lists'
 import { MARGIN_PRESETS, PAPER_SIZES, withOrientation, withPaper, cmLabel, mmToPx } from '../model/settings'
 import { modKey, isMac, isNative } from '../platform'
 import { MobileRibbon } from './MobileRibbon'
+import { TABLE_STYLES, TABLE_STYLES_SHOWN, cellLook, lookFill, tableStyle, type TableStyle, type TableStyleId } from '../model/tableStyles'
+import { setTableStyle } from '../editor/table'
 import { CommandSearch, CMD_SELECTOR, type CmdEntry } from './CommandSearch'
 import { ShapeGallery, ShapeIcon, insertShape, changeKind } from './ShapeTools'
 import { LINE_WEIGHTS_PT, hasCrop, isLine, ptToPx, pxToPt, shapeSrc, type VShape } from '../editor/shapes'
-import { IMG_ASPECTS, IMG_SHADOWS, IMG_SHAPES, SHADOW, DEFAULT_RADIUS, aspectValue, clampRadius, displaySize, isShapeCropMode, setShapeCropMode, formatRadius, radiusToSlider, sliderToRadius, shapeClipCss, type ImgAttrs } from '../editor/image'
+import { IMG_ASPECTS, IMG_SHADOWS, IMG_SHAPES, SHADOW, DEFAULT_RADIUS, aspectValue, clampRadius, displaySize, isShapeCropMode, setShapeCropMode, formatRadius, normRotate, radiusToSlider, sliderToRadius, shapeClipCss, type ImgAttrs } from '../editor/image'
 import { Ill } from './illustrations'
 import type { BreakKind } from '../editor/nodes'
 import { insertTrainingImage } from './Training'
@@ -260,6 +262,7 @@ function HomeTab({ api }: { api: AppApi }) {
             </Dropdown>
             <Btn icon={ill('indentLess')} title={`${t('para.outdent')} (${modKey}⇧M)`} onClick={() => c().outdent().run()} />
             <Btn icon={ill('indentMore')} title={`${t('para.indent')} (${modKey}M)`} onClick={() => c().indent().run()} />
+            <Btn icon={ill('marks')} title={`${t('view.marksTitle')} (${modKey}⇧8)`} active={api.showMarks} onClick={() => api.setShowMarks(!api.showMarks)} />
           </Row>
           <Row>
             <Btn icon={ill('alignLeft')} title={`${t('para.alignLeft')} (${modKey}L)`} active={align('left') || (!align('center') && !align('right') && !align('justify'))} onClick={() => c().setTextAlign('left').run()} />
@@ -677,10 +680,17 @@ function TableTab({ api }: { api: AppApi }) {
   return (
     <>
       <Group label={t('g.rowsCols')}>
-        <Btn big icon={ill('rowAbove', B)} label={t('tbl.above')} title={t('tbl.aboveTitle')} onClick={() => c().addRowBefore().run()} />
-        <Btn big icon={ill('rowBelow', B)} label={t('tbl.below')} title={t('tbl.belowTitle')} onClick={() => c().addRowAfter().run()} />
-        <Btn big icon={ill('colLeft', B)} label={t('tbl.left')} title={t('tbl.leftTitle')} onClick={() => c().addColumnBefore().run()} />
-        <Btn big icon={ill('colRight', B)} label={t('tbl.right')} title={t('tbl.rightTitle')} onClick={() => c().addColumnAfter().run()} />
+        <Dropdown big icon={ill('rowBelow', B)} label={t('tbl.insert')} title={t('tbl.insertTitle')}>
+          {(close) => (
+            <>
+              <MenuItem icon={ill('rowAbove', 16)} label={t('tbl.aboveTitle')} onClick={() => { c().addRowBefore().run(); close() }} />
+              <MenuItem icon={ill('rowBelow', 16)} label={t('tbl.belowTitle')} onClick={() => { c().addRowAfter().run(); close() }} />
+              <MenuSep />
+              <MenuItem icon={ill('colLeft', 16)} label={t('tbl.leftTitle')} onClick={() => { c().addColumnBefore().run(); close() }} />
+              <MenuItem icon={ill('colRight', 16)} label={t('tbl.rightTitle')} onClick={() => { c().addColumnAfter().run(); close() }} />
+            </>
+          )}
+        </Dropdown>
         <Dropdown big icon={ill('delete', B)} label={t('common.delete')} title={t('common.delete')}>
           {(close) => (
             <>
@@ -690,6 +700,9 @@ function TableTab({ api }: { api: AppApi }) {
             </>
           )}
         </Dropdown>
+      </Group>
+      <Group label={t('g.tableStyles')}>
+        <TableStyleGallery editor={e} />
       </Group>
       <Group label={t('g.cells')}>
         <Btn big icon={ill('merge', B)} label={t('tbl.merge')} title={t('tbl.merge')} disabled={!e.can().mergeCells()} onClick={() => c().mergeCells().run()} />
@@ -712,6 +725,61 @@ function TableTab({ api }: { api: AppApi }) {
   )
 }
 
+/** The style of the table around the caret ('grid' = none). */
+function currentTableStyle(e: Editor): TableStyleId {
+  const { $from } = e.state.selection
+  for (let d = $from.depth; d > 0; d--) if ($from.node(d).type.name === 'table') return tableStyle($from.node(d).attrs.tableStyle)?.id ?? 'grid'
+  const sel = e.state.selection
+  return sel instanceof NodeSelection && sel.node.type.name === 'table' ? tableStyle(sel.node.attrs.tableStyle)?.id ?? 'grid' : 'grid'
+}
+
+/** A 4×4 preview of a table style in the current theme's colours. */
+function TableStyleThumb({ s }: { s: TableStyle }) {
+  const W = 11, H = 7
+  return (
+    <svg width={W * 4 + 1} height={H * 4 + 1} viewBox={`0 0 ${W * 4 + 1} ${H * 4 + 1}`} aria-hidden>
+      {Array.from({ length: 4 }, (_, r) => Array.from({ length: 4 }, (_, c) => {
+        const l = cellLook(s, r, c === 0)
+        const fill = lookFill(l)
+        return (
+          <g key={`${r}-${c}`}>
+            <rect x={c * W + 0.5} y={r * H + 0.5} width={W} height={H} fill={fill ? resolveColor(fill) : '#fff'} stroke="#7f8c8c" strokeWidth={0.6} />
+            <rect x={c * W + 3} y={r * H + 3} width={W - 6} height={l?.bold ? 1.8 : 1.1} rx={0.5} fill={l?.ink ? resolveColor(l.ink) : l?.bold ? '#243b3a' : '#9db4b3'} />
+          </g>
+        )
+      }))}
+    </svg>
+  )
+}
+
+function TableStyleGallery({ editor: e }: { editor: Editor }) {
+  const cur = currentTableStyle(e)
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const card = (s: TableStyle, named = false) => {
+    const name = t(`tstyle.${s.id}`)
+    return (
+      <button key={s.id} className={`tstyle-card${named ? ' named' : ''}${cur === s.id ? ' active' : ''}`} title={t('tstyle.word', { name, word: s.word })} aria-label={name}
+        onMouseDown={(ev) => ev.preventDefault()} onClick={() => { setTableStyle(e, s.id); setOpen(false) }}>
+        <TableStyleThumb s={s} />
+        {named && <span className="tstyle-name">{name}</span>}
+      </button>
+    )
+  }
+  const more = TABLE_STYLES.slice(TABLE_STYLES_SHOWN)
+  return (
+    <div className="tstyle-gallery" ref={ref}>
+      {TABLE_STYLES.slice(0, TABLE_STYLES_SHOWN).map((s) => card(s))}
+      <button className={`tstyle-more${more.some((s) => s.id === cur) ? ' active' : ''}`} title={t('tstyle.more')} aria-haspopup="menu" aria-expanded={open}
+        onMouseDown={(ev) => ev.preventDefault()} onClick={() => setOpen((x) => !x)}>▾</button>
+      <PopoverList anchor={ref.current} open={open} onClose={() => setOpen(false)} className="tstyle-pop">
+        <MenuTitle>{t('tstyle.more')}</MenuTitle>
+        <div className="tstyle-grid">{more.map((s) => card(s, true))}</div>
+      </PopoverList>
+    </div>
+  )
+}
+
 // ───────────────────────── Contextual: Picture ─────────────────────────
 function WrapArt({ kind, align }: { kind: 'topBottom' | 'square'; align: string }) {
   const lines = [4, 12, 20, 28, 36]
@@ -728,6 +796,18 @@ function WrapArt({ kind, align }: { kind: 'topBottom' | 'square'; align: string 
       {lines.map((t) => <i key={t} style={{ top: t, left: t > 2 && t < 30 && align !== 'right' ? 34 : 0, right: t > 2 && t < 30 && align === 'right' ? 34 : 0 }} />)}
       <b style={{ top: 6, height: 22, width: 30, left: align === 'right' ? 'auto' : 0, right: align === 'right' ? 0 : 'auto' }} />
     </span>
+  )
+}
+
+/** Rotation of a picture or shape: degrees, plus quarter turns either way. */
+function RotateField({ a, set }: { a: ImgAttrs; set: (p: Partial<ImgAttrs>) => void }) {
+  const d = normRotate(a.rotate)
+  return (
+    <Row>
+      <NumField label={t('pic.rotate')} unit="°" step={15} value={d} width={64} onChange={(v) => set({ rotate: normRotate(v) })} />
+      <Btn icon={<span className="rot-ico">↺</span>} title={t('pic.rotateLeft')} onClick={() => set({ rotate: normRotate(d - 90) })} />
+      <Btn icon={<span className="rot-ico">↻</span>} title={t('pic.rotateRight')} onClick={() => set({ rotate: normRotate(d + 90) })} />
+    </Row>
   )
 }
 
@@ -853,6 +933,7 @@ function PictureTab({ api }: { api: AppApi }) {
         <Col>
           <Row>{ill('widthArrows', 20)}<NumField label={t('common.width')} unit={t('unit.cm')} step={0.5} min={0.3} value={pxToCm(box.w)} onChange={(v) => setWidth(cmToPx(v))} /></Row>
           <Row>{ill('heightArrows', 20)}<NumField label={t('common.height')} unit={t('unit.cm')} step={0.5} min={0.3} value={pxToCm(box.h)} onChange={(v) => setWidth(cmToPx(v) / boxRatio)} /></Row>
+          <RotateField a={a} set={set} />
         </Col>
         <Col>
           <Row>
@@ -874,7 +955,7 @@ function PictureTab({ api }: { api: AppApi }) {
       <Group label={t('g.actions')}>
         <Col>
           <Btn icon={ill("replaceImage")} label={t('pic.change')} title={t('pic.changeTitle')} onClick={() => replaceRef.current?.click()} />
-          <Btn icon={ill("resetStyle")} label={t('pic.reset')} title={t('pic.resetTitle')} onClick={() => set({ shape: 'rect', aspect: null, focusX: 50, focusY: 50, shadow: 'none', radius: DEFAULT_RADIUS })} />
+          <Btn icon={ill("resetStyle")} label={t('pic.reset')} title={t('pic.resetTitle')} onClick={() => set({ shape: 'rect', aspect: null, focusX: 50, focusY: 50, shadow: 'none', radius: DEFAULT_RADIUS, rotate: 0 })} />
           <Btn icon={ill("delete")} label={t('common.delete')} title={t('pic.deleteTitle')} onClick={() => e.chain().focus().deleteSelection().run()} />
         </Col>
         <input ref={replaceRef} type="file" accept="image/*" className="hidden-input" onChange={async (ev) => {
@@ -984,6 +1065,7 @@ function ShapeTab({ api }: { api: AppApi }) {
         <Col>
           <Row>{ill('widthArrows', 20)}<NumField label={t('common.width')} unit={t('unit.cm')} step={0.5} min={0.3} value={pxToCm(box.w)} onChange={(cm) => setSize(cmToPx(cm), box.h)} /></Row>
           <Row>{ill('heightArrows', 20)}<NumField label={t('common.height')} unit={t('unit.cm')} step={0.5} min={0.3} value={pxToCm(box.h)} onChange={(cm) => setSize(box.w, cmToPx(cm))} /></Row>
+          <RotateField a={a} set={set} />
         </Col>
       </Group>
       <Group label={t('g.actions')}>

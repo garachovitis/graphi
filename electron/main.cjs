@@ -4,7 +4,8 @@
 // Graphi is offline by design: the renderer can't reach the network (see `lockDownSession`) and
 // Chromium's own spell checker, which downloads dictionaries on Windows / Linux, is off —
 // proofing is Graphi's own, bundled with the app (src/proofing). The only download is a picture
-// the user asks for by URL (Insert ▸ Pictures ▸ From a URL), fetched here, not by the page.
+// the user asks for by URL (Insert ▸ Pictures ▸ From a URL), fetched here, not by the page, and the
+// dictation model once the user agreed to download it (./model.cjs).
 'use strict'
 
 const { app, BrowserWindow, Menu, dialog, ipcMain, shell, session } = require('electron')
@@ -12,6 +13,7 @@ const path = require('node:path')
 const fs = require('node:fs/promises')
 const fsSync = require('node:fs')
 const { t, setLang, getLang, LANG_NAMES } = require('./i18n.cjs')
+const { registerModelScheme, setupModel } = require('./model.cjs')
 
 const isMac = process.platform === 'darwin'
 const DEV_ICON = path.join(__dirname, '../build/icon.png')
@@ -429,13 +431,14 @@ ipcMain.handle('net:fetch-image', async (_e, url) => {
 ipcMain.handle('shell:reveal', (_e, p) => { if (isGranted(p)) shell.showItemInFolder(p) })
 
 // ───────────────────────── security ─────────────────────────
-// Local Font Access (real font list in the font picker) and the clipboard; nothing else —
-// no camera, microphone, location, notifications…
+// Local Font Access (real font list in the font picker), the clipboard and the microphone for
+// Home ▸ Dictate (audio only, processed on the device); nothing else — no camera, location, notifications…
 const PERMISSIONS = new Set(['local-fonts', 'clipboard-read', 'clipboard-sanitized-write'])
+const audioOnly = (types) => (types?.length ? types : ['audio']).every((m) => m === 'audio')
 
 function lockDownSession(ses) {
-  ses.setPermissionRequestHandler((_wc, permission, cb) => cb(PERMISSIONS.has(permission)))
-  ses.setPermissionCheckHandler((_wc, permission) => PERMISSIONS.has(permission))
+  ses.setPermissionRequestHandler((_wc, permission, cb, details) => cb(PERMISSIONS.has(permission) || (permission === 'media' && audioOnly(details?.mediaTypes))))
+  ses.setPermissionCheckHandler((_wc, permission, _origin, details) => PERMISSIONS.has(permission) || (permission === 'media' && audioOnly(details?.mediaType ? [details.mediaType] : [])))
   // No network traffic from the renderer, whatever a document or a bug might try (remote images,
   // fetch, WebSockets). Only the Vite dev server gets through, in development.
   ses.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (req, cb) => {
@@ -445,6 +448,7 @@ function lockDownSession(ses) {
 
 // ───────────────────────── lifecycle ─────────────────────────
 if (process.env.GRAFI_SELFTEST) require('./selftest.cjs')(process.env.GRAFI_SELFTEST, grant)
+registerModelScheme()
 
 function fileArgs(argv) {
   return argv.slice(app.isPackaged ? 1 : 2).filter((a) => OPENABLE.includes(path.extname(a).toLowerCase()) && fsSync.existsSync(a))
@@ -471,6 +475,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     if (!app.isPackaged && isMac) app.dock?.setIcon(DEV_ICON)
     lockDownSession(session.defaultSession)
+    setupModel()
     setLang(readPrefs().lang || 'el')
     buildMenu()
 

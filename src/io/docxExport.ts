@@ -14,6 +14,7 @@ import { DEFAULT_FONT, PARA_STYLES, type ParaStyle } from '../model/styles'
 import { fontSizeToPt, colorHex, normalizeColor } from '../editor/units'
 import { currentTheme, parseThemeRef, type ColorRef, type Slot } from '../model/themes'
 import { HEADER_TINT } from '../model/docCss'
+import { bakeTableStyle } from '../model/tableStyles'
 import { isSectionBreak, type BreakKind } from '../editor/nodes'
 import { anchoredAtStart, pictureAttrs, pictureKey, preparePictures, type PreparedPicture } from './pictures'
 import { TEXT_DISTANCE } from '../editor/image'
@@ -221,16 +222,18 @@ function inlineRuns(node: JSONContent, ctx: Ctx, extra: Any = {}): Any[] {
       if (img) {
         const EMU = 9525 // per px
         const dist = a.wrap && TEXT_DISTANCE[a.wrap]
+        // Pinned to its page (floats.ts): from the page's margins — the node is in a paragraph on that page.
+        const pinned = a.page != null && a.page >= 0
         const floating = a.wrap && dist
           ? {
-              horizontalPosition: a.x != null ? { relative: HorizontalPositionRelativeFrom.COLUMN, offset: Math.round(a.x * EMU) } : {
-                relative: HorizontalPositionRelativeFrom.COLUMN,
+              horizontalPosition: a.x != null ? { relative: pinned ? HorizontalPositionRelativeFrom.MARGIN : HorizontalPositionRelativeFrom.COLUMN, offset: Math.round(a.x * EMU) } : {
+                relative: pinned ? HorizontalPositionRelativeFrom.MARGIN : HorizontalPositionRelativeFrom.COLUMN,
                 align: a.wrap === 'square'
                   ? (a.align === 'right' ? HorizontalPositionAlign.RIGHT : HorizontalPositionAlign.LEFT)
                   : a.align === 'left' ? HorizontalPositionAlign.LEFT : a.align === 'right' ? HorizontalPositionAlign.RIGHT : HorizontalPositionAlign.CENTER,
               },
               verticalPosition: {
-                relative: anchoredAtStart(inline, index) ? VerticalPositionRelativeFrom.PARAGRAPH : VerticalPositionRelativeFrom.LINE,
+                relative: pinned ? VerticalPositionRelativeFrom.MARGIN : anchoredAtStart(inline, index) ? VerticalPositionRelativeFrom.PARAGRAPH : VerticalPositionRelativeFrom.LINE,
                 offset: Math.round((a.y || 0) * EMU),
               },
               // Text wraps on one side, as in Grafi: left of a right-hand picture, right of a left-hand one.
@@ -238,12 +241,12 @@ function inlineRuns(node: JSONContent, ctx: Ctx, extra: Any = {}): Any[] {
                 ? { type: TextWrappingType.SQUARE, side: a.align === 'right' ? TextWrappingSide.LEFT : TextWrappingSide.RIGHT }
                 : { type: TextWrappingType.TOP_AND_BOTTOM, side: TextWrappingSide.BOTH_SIDES },
               margins: { top: Math.round(dist.top * EMU), bottom: Math.round(dist.bottom * EMU), left: Math.round(dist.side * EMU), right: Math.round(dist.side * EMU) },
-              allowOverlap: false,
+              allowOverlap: pinned,
               lockAnchor: false,
             }
           : undefined
         runs = [new ImageRun({
-          type: img.type, data: img.bytes, transformation: { width: img.w, height: img.h }, floating,
+          type: img.type, data: img.bytes, transformation: { width: img.w, height: img.h, ...(a.rotate ? { rotation: a.rotate } : {}) }, floating,
           altText: a.alt ? { name: a.alt, description: a.alt, title: a.alt } : undefined,
         } as Any)]
       }
@@ -374,6 +377,8 @@ function convertList(list: JSONContent, ctx: Ctx, pc: ParaCtx, level: number, in
 }
 
 function convertTable(table: JSONContent, ctx: Ctx): Any {
+  const style = table.attrs?.tableStyle as string | null
+  table = bakeTableStyle(table)
   const rows = table.content || []
   // Column count from the first row (respecting colspan).
   const firstRow = rows[0]?.content || []
@@ -390,6 +395,8 @@ function convertTable(table: JSONContent, ctx: Ctx): Any {
   const colTw = widthsPx.map((w) => Math.round((w || fill) * 15))
 
   return new Table({
+    // Our style's name, so the table keeps it when it comes back (Word ignores an unknown style).
+    style: style ? `Grafi-${style}` : undefined,
     columnWidths: colTw,
     width: { size: colTw.reduce((a, b) => a + b, 0), type: WidthType.DXA },
     rows: rows.map((r) => {

@@ -20,7 +20,7 @@ import { t, fmtNum, onLangChange, type Key } from '../i18n'
 import { parseVShape, shapeSrc, isLine, fullSize, hasCrop, type VShape } from './shapes'
 import { paginationConfig, relayoutNow } from './Pagination'
 import { layoutStore } from './layoutStore'
-import { anchorBlock, floatsPlugin, isPinned, nextUid, registerFloating, requestPlacement, unregisterFloating, type Floating } from './floats'
+import { anchorBlock, floatsPlugin, isPinned, nextUid, registerFloating, requestPlacement, unregisterFloating, type Floating, type Place } from './floats'
 
 export type ImgWrap = 'topBottom' | 'square'
 export type ImgAlign = 'left' | 'center' | 'right'
@@ -100,6 +100,9 @@ export function shapeClipCss(shape: ImgShape | null | undefined, box?: { w: numb
   }
 }
 
+/** Rotation in whole degrees, 0–359 (any number wraps round: -90 → 270). */
+export const normRotate = (d: unknown) => { const n = Math.round(Number(d)); return Number.isFinite(n) ? ((n % 360) + 360) % 360 : 0 }
+
 export function aspectValue(a: string | null | undefined): number | null {
   if (!a) return null
   const [w, h] = a.split(':').map(Number)
@@ -120,6 +123,8 @@ export interface ImgAttrs {
   page?: number | null
   /** Set when this "picture" is a shape (Insert ▸ Shapes); `src` is then drawn from it. */
   vshape?: VShape | null
+  /** Clockwise rotation about the centre, degrees (0–359). Text wraps around the unrotated box, as in Word. */
+  rotate?: number
 }
 
 /** Displayed box size (px) given attributes. */
@@ -139,14 +144,18 @@ export function displaySize(a: ImgAttrs, natural?: { w: number; h: number }): { 
  * blurred shape layer underneath; only HTML export (`withFilter`) uses drop-shadow.
  * `lineHeight`: the anchor paragraph's line height in px, when known (the editor measures it).
  */
-export function pictureStyles(a: ImgAttrs, box: { w: number; h: number }, o: { withFilter?: boolean; lineHeight?: number; place?: { x: number | null; y: number } | null } = {}) {
+export function pictureStyles(a: ImgAttrs, box: { w: number; h: number }, o: { withFilter?: boolean; lineHeight?: number; place?: Place | null } = {}) {
   const wrap: string[] = []
   const img: string[] = [`width:${box.w}px`, `height:${box.h}px`, 'object-fit:cover', `object-position:${a.focusX}% ${a.focusY}%`]
   // `place`: where floats.ts puts a pinned picture, from the line it is drawn beside (may be < 0).
   const x = o.place ? o.place.x : a.x == null ? null : Math.max(0, Math.round(a.x))
   const y = o.place ? o.place.y : a.wrap && a.y ? Math.max(0, Math.round(a.y)) : 0
   const px = (n: number) => `${+n.toFixed(3)}px`
-  if (a.wrap === 'square') {
+  if (o.place?.free && a.wrap) {
+    // Drawn on its spot without moving any text: a float whose margin box is empty.
+    const top = TEXT_DISTANCE[a.wrap].top + y, left = x ?? 0
+    wrap.push('float:left', `margin:${px(top)} ${px(-(left + box.w))} ${px(-(top + box.h))} ${px(left)}`)
+  } else if (a.wrap === 'square') {
     const d = TEXT_DISTANCE.square
     const side = a.align === 'right' ? 'right' : 'left'
     // A right float at `x` keeps its distance to the right edge, so text still wraps on the left.
@@ -167,14 +176,19 @@ export function pictureStyles(a: ImgAttrs, box: { w: number; h: number }, o: { w
   } else if (a.wrap === 'topBottom') {
     const d = TEXT_DISTANCE.topBottom
     const top = px(d.top + y), bottom = px(d.bottom)
-    if (x != null) wrap.push('display:table', `margin:${top} auto ${bottom} ${px(x)}`)
+    // A block of the picture's width (not a table: that would be pushed aside by a square-wrapped
+    // picture beside it; a block may overlap one, and the text below still wraps around it).
+    wrap.push('display:block', `width:${box.w}px`)
+    if (x != null) wrap.push(`margin:${top} auto ${bottom} ${px(x)}`)
     // margin: top right bottom left — the side it is aligned to gets 0, the other(s) auto.
-    else wrap.push('display:table', `margin:${top} ${a.align === 'right' ? '0' : 'auto'} ${bottom} ${a.align === 'left' ? '0' : 'auto'}`)
+    else wrap.push(`margin:${top} ${a.align === 'right' ? '0' : 'auto'} ${bottom} ${a.align === 'left' ? '0' : 'auto'}`)
   } else {
     wrap.push('display:inline-block', 'vertical-align:bottom')
   }
   const clip = shapeClipCss(a.shape, box, a.radius)
   if (clip !== 'none') img.push(`clip-path:${clip}`)
+  // The `rotate` property, not `transform`: dragging moves the picture with a transform of its own.
+  if (a.rotate) wrap.push(`rotate:${normRotate(a.rotate)}deg`)
   const sh = SHADOW[a.shadow || 'none']
   if (sh && o.withFilter) wrap.push(`filter:drop-shadow(0 ${sh.y}px ${sh.blur / 2}px rgba(0,0,0,${sh.alpha}))`)
   return { wrap: wrap.join(';'), img: img.join(';') }
@@ -261,12 +275,13 @@ class PictureView implements NodeView, Floating {
   el: HTMLElement
   img: HTMLImageElement
   readonly uid = nextUid()
-  place: { x: number | null; y: number } | null = null
+  place: Place | null = null
   private readonly wrapped: boolean
   private shadow: HTMLElement
   private natural: { w: number; h: number } | undefined
   private panning = false
   private radiusHandle: HTMLElement
+  private rotateHandle: HTMLElement
 
   constructor(public node: PMNode, readonly view: EditorView, private readonly pos: () => number | undefined) {
     this.wrapped = !!node.attrs.wrap
@@ -298,6 +313,12 @@ class PictureView implements NodeView, Floating {
     this.radiusHandle.appendChild(document.createElement('span')).className = 'wpic-radius-tip'
     this.radiusHandle.addEventListener('pointerdown', (e) => this.dragRadius(e))
     this.el.appendChild(this.radiusHandle)
+    // Rotation handle above the top edge, as in Word: drag round the centre (Shift: 15° steps).
+    this.rotateHandle = document.createElement('span')
+    this.rotateHandle.className = 'wpic-rotate'
+    this.rotateHandle.appendChild(document.createElement('span')).className = 'wpic-radius-tip'
+    this.rotateHandle.addEventListener('pointerdown', (e) => this.dragRotate(e))
+    this.el.appendChild(this.rotateHandle)
     const hint = document.createElement('span')
     hint.className = 'wpic-pan-hint'
     this.el.appendChild(hint)
@@ -326,12 +347,13 @@ class PictureView implements NodeView, Floating {
   getPos() { return this.pos() }
   private get attrs() { return this.node.attrs as ImgAttrs }
   box() { return displaySize(this.attrs, this.natural) }
-  distTop() { return this.attrs.wrap ? TEXT_DISTANCE[this.attrs.wrap].top : 0 }
+  dist() { return TEXT_DISTANCE[this.attrs.wrap || 'topBottom'] }
 
   private offLang: () => void
   /** Tooltips in the UI language (re-applied when the language changes). */
   private labels() {
     this.radiusHandle.title = t('pic.radiusTitle')
+    this.rotateHandle.title = t('pic.rotateTitle')
     ;(this.el.querySelector('.wpic-pan-hint') as HTMLElement).textContent = t('pic.panHint')
   }
   private offCrop: () => void
@@ -361,6 +383,7 @@ class PictureView implements NodeView, Floating {
     }
     this.el.dataset.wrap = a.wrap || 'inline'
     this.el.dataset.pinned = this.wrapped && isPinned(this.node) ? '1' : ''
+    this.el.dataset.free = this.wrapped && this.place?.free ? '1' : ''
     this.placeRadiusHandle(box, radiusPx(a.radius, box))
   }
 
@@ -383,7 +406,8 @@ class PictureView implements NodeView, Floating {
     this.radiusHandle.style.top = `${d}px`
   }
 
-  private zoom() { return this.el.getBoundingClientRect().width / (this.el.offsetWidth || 1) || 1 }
+  /** The page's zoom (from the editor: a rotated picture's own rect is larger than its box). */
+  private zoom() { const d = this.view.dom as HTMLElement; return d.getBoundingClientRect().width / (d.offsetWidth || 1) || 1 }
 
   private dragRadius(e: PointerEvent) {
     e.preventDefault()
@@ -422,6 +446,35 @@ class PictureView implements NodeView, Floating {
     window.addEventListener('pointercancel', up)
   }
 
+  private dragRotate(e: PointerEvent) {
+    e.preventDefault()
+    e.stopPropagation()
+    // The centre doesn't move while rotating, and the rotated box's bounding rect has the same centre.
+    const r = this.el.getBoundingClientRect()
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2
+    const tip = this.rotateHandle.firstChild as HTMLElement
+    this.el.classList.add('rotate-drag')
+    const calc = (ev: PointerEvent) => {
+      // 0° = handle straight above the centre.
+      const deg = (Math.atan2(ev.clientX - cx, cy - ev.clientY) * 180) / Math.PI
+      return normRotate(ev.shiftKey ? Math.round(deg / 15) * 15 : deg)
+    }
+    const show = (d: number) => { this.el.style.rotate = `${d}deg`; tip.textContent = `${d}°` }
+    show(normRotate(this.attrs.rotate))
+    const move = (ev: PointerEvent) => show(calc(ev))
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      this.el.classList.remove('rotate-drag')
+      if (ev.type === 'pointerup') this.setAttrs({ rotate: calc(ev) })
+      else this.render()
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }
+
   private setAttrs(patch: Partial<ImgAttrs>) {
     const pos = this.getPos()
     if (pos == null) return
@@ -441,7 +494,7 @@ class PictureView implements NodeView, Floating {
   }
 
   private pan(e: PointerEvent) {
-    if (!this.panning || (e.target as HTMLElement).closest('.wpic-handle, .wpic-radius')) return
+    if (!this.panning || (e.target as HTMLElement).closest('.wpic-handle, .wpic-radius, .wpic-rotate')) return
     e.preventDefault()
     e.stopPropagation()
     const x0 = e.clientX, y0 = e.clientY
@@ -470,7 +523,7 @@ class PictureView implements NodeView, Floating {
    * On touch, the first tap only selects, so a swipe over a picture still scrolls.
    */
   private drag(e: PointerEvent) {
-    if (e.button !== 0 || !this.view.editable || (e.target as HTMLElement).closest('.wpic-handle, .wpic-radius')) return
+    if (e.button !== 0 || !this.view.editable || (e.target as HTMLElement).closest('.wpic-handle, .wpic-radius, .wpic-rotate')) return
     const pos = this.getPos()
     if (pos == null) return
     const wasSelected = this.el.classList.contains('selected')
@@ -479,37 +532,67 @@ class PictureView implements NodeView, Floating {
     this.view.dispatch(this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, pos)))
     if (e.pointerType === 'touch' && !wasSelected) return
     const x0 = e.clientX, y0 = e.clientY
-    const r0 = this.el.getBoundingClientRect()
     const zoom = this.zoom()
+    // The picture's box (client px), from the centre of what is drawn: rotation keeps the centre.
+    const rr = this.el.getBoundingClientRect(), b = this.box()
+    const r0 = { left: (rr.left + rr.right) / 2 - (b.w * zoom) / 2, top: (rr.top + rr.bottom) / 2 - (b.h * zoom) / 2, width: b.w * zoom, height: b.h * zoom }
     const marker = document.createElement('div')
     marker.className = 'wpic-drop'
+    // The picture follows the pointer as a fixed copy (moving the picture itself would stretch the
+    // scrolled area below the last page); the drop is worked out from the pointer as the page is now,
+    // so scrolling while dragging (the wheel, or holding it near the top / bottom edge) is followed.
+    const ghost = this.el.cloneNode(true) as HTMLElement
+    ghost.classList.remove('selected', 'moving')
+    ghost.classList.add('wpic-ghost')
+    const scroller = this.view.dom.closest('.canvas-scroll') as HTMLElement | null
+    const gx = x0 - r0.left, gy = y0 - r0.top
+    let px = x0, py = y0
     let moving = false
     let target: Drop | null = null
-    const move = (ev: PointerEvent) => {
-      if (!moving) {
-        if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return
-        moving = true
-        this.el.classList.add('moving')
-        document.body.appendChild(marker)
-      }
-      const dx = ev.clientX - x0, dy = ev.clientY - y0
-      this.el.style.transform = `translate(${dx / zoom}px, ${dy / zoom}px)`
-      target = this.dropAt(r0.left + dx, r0.top + dy, r0, zoom)
+    let frame = 0
+    const update = () => {
+      const left = px - gx, top = py - gy
+      Object.assign(ghost.style, { left: `${left / zoom}px`, top: `${top / zoom}px` })
+      target = this.dropAt(left, top, r0, zoom)
       marker.style.display = target ? '' : 'none'
       if (target) Object.assign(marker.style, { left: `${target.preview.left}px`, top: `${target.preview.top}px`, width: `${r0.width}px`, height: `${r0.height}px` })
     }
+    const autoScroll = () => {
+      frame = 0
+      if (!moving || !scroller) return
+      const r = scroller.getBoundingClientRect()
+      const v = py < r.top + 48 ? -Math.ceil((r.top + 48 - py) / 4) : py > r.bottom - 48 ? Math.ceil((py - r.bottom + 48) / 4) : 0
+      if (v) { scroller.scrollTop += v; update() }
+      frame = requestAnimationFrame(autoScroll)
+    }
+    const move = (ev: PointerEvent) => {
+      px = ev.clientX; py = ev.clientY
+      if (!moving) {
+        if (Math.hypot(px - x0, py - y0) < 5) return
+        moving = true
+        this.el.classList.add('moving')
+        ghost.setAttribute('style', `${this.el.getAttribute('style') || ''};position:fixed;margin:0;float:none;zoom:${zoom};z-index:1000;pointer-events:none;opacity:.8`)
+        document.body.append(ghost, marker)
+        frame = requestAnimationFrame(autoScroll)
+      }
+      update()
+    }
+    const onScroll = () => { if (moving) update() }
     const end = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', end)
       window.removeEventListener('pointercancel', end)
+      window.removeEventListener('scroll', onScroll, true)
+      cancelAnimationFrame(frame)
       marker.remove()
+      ghost.remove()
       this.el.classList.remove('moving')
-      this.el.style.transform = ''
       if (moving && target && ev.type === 'pointerup') this.moveTo(target)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', end)
     window.addEventListener('pointercancel', end)
+    window.addEventListener('scroll', onScroll, true)
   }
 
   /** Where a picture of client `size` whose top-left corner is at (left, top) (client px) would land. */
@@ -551,7 +634,7 @@ class PictureView implements NodeView, Floating {
       // The node moves into the paragraph beside its new spot (Word's anchor: it is exported with it,
       // and deleting that paragraph deletes the picture). The picture itself is placed by floats.ts.
       this.el.classList.add('lifted')
-      const blk = anchorBlock(view, drop.page, drop.page * paginationConfig.pitch + drop.y - this.distTop(), a.wrap!)
+      const blk = anchorBlock(view, drop.page, drop.page * paginationConfig.pitch + drop.y - this.dist().top, a.wrap!)
       this.el.classList.remove('lifted')
       const $from = view.state.doc.resolve(from)
       movePicture(view, from, !blk || blk.pos === $from.before() ? from : blk.pos + 1, attrs)
@@ -577,10 +660,14 @@ class PictureView implements NodeView, Floating {
     const crop = !!vs && cropMode && !isLine(vs.k)
     const full = vs ? fullSize(vs, start.w, start.h) : null
     const c0 = vs?.crop || { l: 0, t: 0, r: 0, b: 0 }
+    // On a rotated picture, the pointer's movement in the picture's own (unrotated) axes.
+    const rad = (normRotate(this.attrs.rotate) * Math.PI) / 180, cos = Math.cos(rad), sin = Math.sin(rad)
+    const local = (ev: PointerEvent) => { const mx = ev.clientX - x0, my = ev.clientY - y0; return { mx: mx * cos + my * sin, my: -mx * sin + my * cos } }
     // Shapes resize freely (Shift keeps the proportions); pictures always keep theirs.
     const calc = (ev: PointerEvent): { w: number; h: number; v?: VShape } => {
-      let w = dx ? Math.round(Math.max(24, Math.min(colW, start.w + (dx * (ev.clientX - x0)) / zoom))) : start.w
-      let h = dy ? Math.round(Math.max(vs && isLine(vs.k) ? 12 : 16, Math.min(maxH, start.h + (dy * (ev.clientY - y0)) / zoom))) : start.h
+      const { mx, my } = local(ev)
+      let w = dx ? Math.round(Math.max(24, Math.min(colW, start.w + (dx * mx) / zoom))) : start.w
+      let h = dy ? Math.round(Math.max(vs && isLine(vs.k) ? 12 : 16, Math.min(maxH, start.h + (dy * my) / zoom))) : start.h
       if (!vs) { if (!dx) w = Math.round(h / ratio); w = Math.min(w, Math.floor(maxH / ratio)); return { w, h: Math.round(w * ratio) } }
       if (!crop) {
         if (ev.shiftKey) { if (dx) h = Math.round(w * ratio); else w = Math.round(h / ratio) }
@@ -643,7 +730,7 @@ class PictureView implements NodeView, Floating {
   stopEvent(e: Event) {
     const t = e.target as HTMLElement
     // Pointer presses are ours (select / move / pan / resize), not ProseMirror's.
-    return this.panning || !!t.closest?.('.wpic-handle, .wpic-radius') || e.type === 'dblclick' || e.type === 'mousedown' || e.type === 'dragstart'
+    return this.panning || !!t.closest?.('.wpic-handle, .wpic-radius, .wpic-rotate') || e.type === 'dblclick' || e.type === 'mousedown' || e.type === 'dragstart'
   }
   ignoreMutation() { return true }
 }
@@ -733,6 +820,7 @@ export const Picture = Image.extend({
       y: attr('y', null, (v) => (v === '' || !Number.isFinite(Number(v)) ? null : Number(v))),
       page: attr('page', null, (v) => (v === '' || !Number.isInteger(Number(v)) ? null : Number(v))),
       vshape: attr('vshape', null, parseVShape),
+      rotate: attr('rotate', 0, normRotate),
       // One style attribute for HTML export / clipboard, computed from all of the above.
       _style: {
         default: null,
@@ -753,6 +841,7 @@ export const Picture = Image.extend({
           if (a.x != null) out['data-x'] = String(Math.round(a.x))
           if (a.y) out['data-y'] = String(Math.round(a.y))
           if (a.page != null) out['data-page'] = String(a.page)
+          if (a.rotate) out['data-rotate'] = String(normRotate(a.rotate))
           if (a.vshape) out['data-vshape'] = JSON.stringify(a.vshape)
           return out
         },
