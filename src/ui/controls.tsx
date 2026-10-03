@@ -104,7 +104,7 @@ export function Dropdown(p: {
   const ref = useRef<HTMLDivElement>(null)
   const close = () => setOpen(false)
   return (
-    <div ref={ref} className={`rb-split${p.big ? ' big' : ''}${p.active ? ' active' : ''} ${p.className || ''}`}>
+    <div ref={ref} className={`rb-split${p.big ? ' big' : ''}${p.big && p.onClick ? ' stack' : ''}${p.active ? ' active' : ''} ${p.className || ''}`}>
       {p.onClick ? (
         <>
           <button type="button" className="rb-btn rb-split-main" title={p.title} disabled={p.disabled} onMouseDown={(e) => e.preventDefault()} onClick={p.onClick}>

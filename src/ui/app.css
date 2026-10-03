@@ -142,6 +142,12 @@ input, select, textarea { font: inherit; color: var(--text); }
 .rb-split.big > .rb-btn { flex-direction: column; height: 72px; min-width: 56px; max-width: 92px; padding: 5px 4px 3px; }
 .rb-split.big > .rb-btn .rb-label { white-space: normal; text-align: center; line-height: 1.15; font-size: 12px; }
 .rb-split.big > .rb-btn svg:first-child { color: var(--accent); }
+/* Big split buttons (action + menu) stack like Word's: the action on top, the options arrow under its label. */
+.rb-split.big.stack { flex-direction: column; height: 72px; }
+.rb-split.big.stack > .rb-btn { height: auto; gap: 3px; }
+.rb-split.big.stack > .rb-split-main { flex: 1 1 auto; padding-bottom: 0; border-radius: 4px 4px 0 0; }
+.rb-split.big.stack > .rb-split-arrow { flex: 0 0 16px; min-height: 0; max-width: none; padding: 0; justify-content: center; border-radius: 0 0 4px 4px; }
+.rb-split.big.stack > .rb-split-arrow svg { color: inherit; opacity: .7; }
 
 .color-icon { position: relative; display: inline-flex; flex-direction: column; align-items: center; }
 .color-icon i { display: block; width: 16px; height: 4px; margin-top: -2px; border-radius: 1px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
@@ -620,7 +626,8 @@ kbd { font: 12px ui-monospace, Menlo, Consolas, monospace; background: var(--chr
 .statusbar { padding-bottom: env(safe-area-inset-bottom); height: calc(26px + env(safe-area-inset-bottom)); }
 @media (pointer: coarse) {
   .rb-btn { min-height: 34px; min-width: 34px; }
-  .rb-btn.big, .rb-split.big > .rb-btn { height: 64px; }
+  .rb-btn.big, .rb-split.big > .rb-btn, .rb-split.big.stack { height: 64px; }
+  .rb-split.big.stack > .rb-btn { height: auto; }
   .menu-item { padding: 10px 12px; }
   .combo { height: 32px; }
   .doc-surface .wpic-handle { width: 18px; height: 18px; }

@@ -14,6 +14,7 @@
 //   • atomic blocks (tables, rules, TOC) move as a whole when they fit on a page;
 //   • a square-wrapped picture stays on the page of the line it is anchored on (it may hang
 //     over the following paragraphs, which wrap around it — so it is measured on its own);
+//     a picture pinned to a page (floats.ts) never has the line it hangs from moved off it;
 //   • hard page breaks and "page break before" force the next block to a new page.
 //
 // Spacers are decorations, never document content, so the model stays clean and
@@ -41,8 +42,14 @@ export const paginationConfig: PaginationConfig = { enabled: true, pitch: 1123 +
 
 export const paginationKey = new PluginKey<DecorationSet>('pagination')
 
-/** Each editor's "lay out now" (see relayoutNow). */
+/** Each editor's "lay out now" (see relayoutNow), and its page-breaking pass alone (see paginateOnly). */
 const runners = new WeakMap<EditorView, () => void>()
+const paginators = new WeakMap<EditorView, () => void>()
+
+/** Passes run after each page-breaking pass; one returning true changed the layout (→ paginate again). */
+const layoutPasses: ((view: EditorView) => boolean)[] = []
+export const addLayoutPass = (f: (view: EditorView) => boolean) => { layoutPasses.push(f) }
+const runPasses = (view: EditorView) => layoutPasses.reduce((ch, f) => f(view) || ch, false)
 
 /**
  * `top` marks a block that was moved whole to a new page: in print the forced break
@@ -106,6 +113,8 @@ interface Line {
   b: number
   /** A top-and-bottom picture's band, not a line of text (widow / orphan control ignores it). */
   pic?: boolean
+  /** The band of a picture pinned to its page, or the line one hangs from: it must not be moved. */
+  pin?: boolean
 }
 
 interface Unit {
@@ -125,12 +134,10 @@ interface Unit {
   /** the block's own padding-top (the page-push padding is added to it) */
   padTop?: number
   /** Square-wrapped (floating) pictures anchored in this block: extent and the line they are anchored on. */
-  floats?: { t: number; b: number; line: number }[]
+  floats?: { t: number; b: number; line: number; pin: boolean }[]
   /** The block anchors a floating picture (only then do its lines need measuring). */
   hasFloat: boolean
 }
-
-const isFloat = (n: PMNode) => n.type.name === 'image' && n.attrs.wrap === 'square'
 
 function toCol(f: Frame, clientY: number) {
   return (clientY - f.originTop) / f.scale
@@ -166,7 +173,8 @@ function collectUnits(view: EditorView, f: Frame): Unit[] {
         heading: name === 'heading',
         keepNext: name === 'heading' || !!child.attrs.keepNext,
         breakBefore: !!child.attrs.pageBreakBefore,
-        hasFloat: child.inlineContent && child.content.content.some(isFloat),
+        // Pictures are drawn where they sit on the page (floats.ts), not where their node is.
+        hasFloat: child.inlineContent && !!el.querySelector('.wpic[data-wrap="square"]'),
       })
     })
   }
@@ -182,7 +190,7 @@ function measureLines(u: Unit, f: Frame): Line[] {
   u.contentTop = u.top + (parseFloat(cs.paddingTop) + parseFloat(cs.borderTopWidth)) / 1
   u.contentBottom = u.bottom - (parseFloat(cs.paddingBottom) + parseFloat(cs.borderBottomWidth)) / 1
   const rects: Line[] = []
-  const floats: { t: number; b: number; anchor: number }[] = []
+  const floats: { t: number; b: number; anchor: number; pin: boolean }[] = []
   // Text runs (excluding text that belongs to picture chrome such as hints).
   const tw = document.createTreeWalker(u.el, NodeFilter.SHOW_TEXT)
   const range = document.createRange()
@@ -198,8 +206,9 @@ function measureLines(u: Unit, f: Frame): Line[] {
     if (!r.height) continue
     const box = { t: toCol(f, r.top), b: toCol(f, r.bottom) }
     // A float sits `margin-top` below the line it is anchored on (its free vertical offset).
-    if (pic.dataset.wrap === 'square') floats.push({ ...box, anchor: toCol(f, r.top - parseFloat(getComputedStyle(pic).marginTop) * f.scale) })
-    else rects.push({ ...box, pic: pic.dataset.wrap === 'topBottom' })
+    const pin = pic.dataset.pinned === '1'
+    if (pic.dataset.wrap === 'square') floats.push({ ...box, anchor: toCol(f, r.top - parseFloat(getComputedStyle(pic).marginTop) * f.scale), pin })
+    else rects.push({ ...box, pic: pic.dataset.wrap === 'topBottom', pin: pin && pic.dataset.wrap === 'topBottom' })
   }
   for (const br of u.el.querySelectorAll('br')) {
     const r = br.getBoundingClientRect()
@@ -213,6 +222,7 @@ function measureLines(u: Unit, f: Frame): Line[] {
       g.t = Math.min(g.t, r.t)
       g.b = Math.max(g.b, r.b)
       g.pic = g.pic && r.pic
+      g.pin = g.pin || r.pin
     } else groups.push({ ...r })
   }
   const textTops = groups.map((g) => g.t)
@@ -224,13 +234,15 @@ function measureLines(u: Unit, f: Frame): Line[] {
     const bounds = [u.contentTop]
     for (let i = 1; i < groups.length; i++) bounds.push((groups[i - 1].b + groups[i].t) / 2)
     bounds.push(u.contentBottom)
-    lines = groups.map((g, i) => ({ t: bounds[i], b: bounds[i + 1], pic: g.pic }))
+    // A pinned picture's band ends where the picture does: its spot was chosen to fit on the page.
+    lines = groups.map((g, i) => ({ t: bounds[i], b: g.pic && g.pin ? Math.min(bounds[i + 1], g.b) : bounds[i + 1], pic: g.pic, pin: g.pin }))
   }
   // A float belongs to the line box it is anchored on: it moves when that line moves.
-  u.floats = floats.map(({ t, b, anchor }) => {
+  u.floats = floats.map(({ t, b, anchor, pin }) => {
     let line = lines.findIndex((l) => anchor < l.b - 0.5)
     if (line < 0) line = lines.length - 1
-    return { t, b, line }
+    if (pin) lines[line].pin = true
+    return { t, b, line, pin }
   })
   u.lines = lines
   u.textTops = textTops
@@ -381,7 +393,7 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
 
     // Keep with next: if this whole block fits on its page but the next block's first
     // line does not, move this block to the next page (so a heading never ends a page).
-    if (u.keepNext && i + 1 < units.length) {
+    if (u.keepNext && i + 1 < units.length && !u.el.querySelector('.wpic[data-pinned="1"]')) {
       const aT = lines[0].t + shift
       const aB = lines[lines.length - 1].b + shift
       const pg = pageOf(aT)
@@ -420,10 +432,13 @@ function computeLayout(view: EditorView): { spacers: Spacer[]; pages: number; he
       // wider on the next page: never split between the anchor line and the picture's bottom.
       // Split just below the picture (it fits on this page), else above its anchor line.
       for (const fl of u.floats ?? []) {
+        if (fl.pin) continue
         let last = fl.line
         while (last + 1 < n && lines[last + 1].t < fl.b - 1) last++
         if (s > fl.line && s <= last) s = k > last ? last + 1 : fl.line
       }
+      // A pinned picture stays on its page: the split may not carry its band or anchor line over.
+      for (let j = k - 1; j >= s; j--) if (lines[j].pin) { s = j + 1; break }
       const sTop = lines[s].t + shift
       if (s < k && sTop <= pageTop(pageOf(sTop)) + TOL) s = k // would not gain anything
       const lt = lines[s].t + shift
@@ -513,7 +528,6 @@ export const Pagination = Extension.create({
             if (timer) clearTimeout(timer)
             timer = 0
             if (view.isDestroyed) return
-            const w = wrapper()
             if (!paginationConfig.enabled) {
               if (current.length) {
                 computed = current = []
@@ -521,17 +535,32 @@ export const Pagination = Extension.create({
               }
               const pages = new Map<number, number>()
               layoutStore.set(1, pages)
+              runPasses(view)
               return
             }
+            const t0 = performance.now()
+            // Floating pictures are placed on the paginated text, which then flows around them:
+            // repeat until nothing moves (usually one or two rounds).
+            let round = 0
+            for (; ; round++) {
+              paginate()
+              if (!runPasses(view)) break
+              // Not settled: at least leave the text paginated around the pictures as they are now.
+              if (round === 5) { paginate(); break }
+            }
+            layoutStore.lastLayoutRounds = round + 1
+            layoutStore.lastLayoutMs = performance.now() - t0
+          }
+
+          const paginate = () => {
+            const w = wrapper()
             w?.classList.add('pg-measuring')
             let result
-            const t0 = performance.now()
             try {
               result = computeLayout(view)
             } finally {
               w?.classList.remove('pg-measuring')
             }
-            layoutStore.lastLayoutMs = performance.now() - t0
             layoutStore.set(result.pages, result.headings)
             // Also re-apply when the decorations were lost although the layout is the same:
             // a block whose type changes (paragraph → heading) is replaced, and its page-push goes with it.
@@ -546,6 +575,7 @@ export const Pagination = Extension.create({
           }
 
           runners.set(view, run)
+          paginators.set(view, paginate)
 
           // Plain timers (not rAF): layout must stay correct even when the window is hidden.
           const schedule = (delay = 40) => {
@@ -589,24 +619,16 @@ export function pageAt(top: number): number {
 }
 
 /**
- * Where a box `height` px tall that should start at `top` (column px) fits inside one page's text
- * area: pulled up off the bottom margin, or onto the next page from the gap between sheets.
- * A floating picture must fit on its page (see computeLayout), so a drop is placed where it will stay.
- */
-export function fitOnPage(top: number, height: number): number {
-  const { enabled, pitch: P, contentHeight: C } = paginationConfig
-  if (!enabled || height > C) return top
-  const page = pageAt(top)
-  if (top > page * P + C) return (page + 1) * P
-  return Math.max(page * P, Math.min(top, page * P + C - height))
-}
-
-/**
  * Paginate `view` synchronously, now, instead of after the usual short delay — for code that must
  * measure the paginated result right away (moving a picture). A decoration-only update: no history.
  */
 export function relayoutNow(view: EditorView) {
   runners.get(view)?.()
+}
+
+/** Only the page-breaking pass, now, without the passes that follow it (for a layout pass to measure the text as it would be). */
+export function paginateOnly(view: EditorView) {
+  if (paginationConfig.enabled) paginators.get(view)?.()
 }
 
 /** Ask the pagination engine to re-measure (after page setup / zoom / view changes). */

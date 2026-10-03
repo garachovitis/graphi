@@ -3,8 +3,9 @@
 //     no text beside it.
 //   • "square" (Τετράγωνη): the picture floats inside the text and the text wraps around
 //     it on its wider side.
-// Both can be dragged to any line and to any horizontal spot (`x`, px from the left of the
-// paragraph's text box); the ribbon's left / centre / right buttons snap them back (x = null).
+// Both are placed freely on a page and stay there whatever happens to the text (floats.ts):
+// dragged anywhere inside a page's text area, never between pages; the ribbon's left / centre /
+// right buttons align them horizontally (x = null).
 // Plus shape crops (circle, rounded, hexagon…), aspect-ratio crops with a movable
 // focal point (double-click to pan the picture inside its frame), and shadows.
 // The «Στρογγυλεμένο» shape has an adjustable corner radius: drag the corner handle on
@@ -12,12 +13,14 @@
 // Exporters "bake" shape/crop/shadow into the image pixels so Word, LibreOffice and
 // PDF show exactly what you see here.
 import Image from '@tiptap/extension-image'
-import type { Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
+import { Fragment, Slice, type Node as PMNode, type ResolvedPos } from '@tiptap/pm/model'
 import type { EditorView, NodeView } from '@tiptap/pm/view'
-import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
+import { NodeSelection, Plugin, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { t, fmtNum, onLangChange, type Key } from '../i18n'
 import { parseVShape, shapeSrc, isLine, fullSize, hasCrop, type VShape } from './shapes'
-import { fitOnPage, pageAt, relayoutNow } from './Pagination'
+import { paginationConfig, relayoutNow } from './Pagination'
+import { layoutStore } from './layoutStore'
+import { anchorBlock, floatsPlugin, isPinned, nextUid, registerFloating, requestPlacement, unregisterFloating, type Floating } from './floats'
 
 export type ImgWrap = 'topBottom' | 'square'
 export type ImgAlign = 'left' | 'center' | 'right'
@@ -107,10 +110,14 @@ export interface ImgAttrs {
   src: string; alt: string | null; title: string | null; width: number | null; height: number | null
   wrap: ImgWrap | null; align: ImgAlign; shape: ImgShape; aspect: string | null; focusX: number; focusY: number; shadow: ImgShadow
   radius: number
-  /** Free horizontal position: px from the left of the paragraph's text box (null = use `align`). */
+  /** Free horizontal position: px from the left of the page's text area (null = use `align`);
+   *  not pinned yet: from the left of the paragraph's text box. */
   x: number | null
-  /** Free vertical position: px below the line the picture is anchored on (0 = on that line). */
+  /** Free vertical position: px below the top of the page's text area; not pinned yet: below the
+   *  line the picture is anchored on (0 = on that line). */
   y?: number | null
+  /** Page a wrapped picture is pinned to (0-based); null = not pinned yet, -1 = its anchor's page (floats.ts). */
+  page?: number | null
   /** Set when this "picture" is a shape (Insert ▸ Shapes); `src` is then drawn from it. */
   vshape?: VShape | null
 }
@@ -132,17 +139,18 @@ export function displaySize(a: ImgAttrs, natural?: { w: number; h: number }): { 
  * blurred shape layer underneath; only HTML export (`withFilter`) uses drop-shadow.
  * `lineHeight`: the anchor paragraph's line height in px, when known (the editor measures it).
  */
-export function pictureStyles(a: ImgAttrs, box: { w: number; h: number }, o: { withFilter?: boolean; lineHeight?: number } = {}) {
+export function pictureStyles(a: ImgAttrs, box: { w: number; h: number }, o: { withFilter?: boolean; lineHeight?: number; place?: { x: number | null; y: number } | null } = {}) {
   const wrap: string[] = []
   const img: string[] = [`width:${box.w}px`, `height:${box.h}px`, 'object-fit:cover', `object-position:${a.focusX}% ${a.focusY}%`]
-  const x = a.x == null ? null : Math.max(0, Math.round(a.x))
-  const y = a.wrap && a.y ? Math.max(0, Math.round(a.y)) : 0
+  // `place`: where floats.ts puts a pinned picture, from the line it is drawn beside (may be < 0).
+  const x = o.place ? o.place.x : a.x == null ? null : Math.max(0, Math.round(a.x))
+  const y = o.place ? o.place.y : a.wrap && a.y ? Math.max(0, Math.round(a.y)) : 0
   const px = (n: number) => `${+n.toFixed(3)}px`
   if (a.wrap === 'square') {
     const d = TEXT_DISTANCE.square
     const side = a.align === 'right' ? 'right' : 'left'
     // A right float at `x` keeps its distance to the right edge, so text still wraps on the left.
-    const edge = x == null ? '0' : side === 'left' ? `${x}px` : `max(0px, calc(100% - ${x + box.w}px))`
+    const edge = x == null ? '0' : side === 'left' ? px(x) : `max(0px, calc(100% - ${px(x + box.w)}))`
     const top = px(d.top + y)
     wrap.push(`float:${side}`, side === 'left' ? `margin:${top} ${px(d.side)} ${px(d.bottom)} ${edge}` : `margin:${top} ${edge} ${px(d.bottom)} ${px(d.side)}`)
     // Moved down by `y`, text runs full width above the picture and wraps only beside it: the float
@@ -159,7 +167,7 @@ export function pictureStyles(a: ImgAttrs, box: { w: number; h: number }, o: { w
   } else if (a.wrap === 'topBottom') {
     const d = TEXT_DISTANCE.topBottom
     const top = px(d.top + y), bottom = px(d.bottom)
-    if (x != null) wrap.push('display:table', `margin:${top} auto ${bottom} ${x}px`)
+    if (x != null) wrap.push('display:table', `margin:${top} auto ${bottom} ${px(x)}`)
     // margin: top right bottom left — the side it is aligned to gets 0, the other(s) auto.
     else wrap.push('display:table', `margin:${top} ${a.align === 'right' ? '0' : 'auto'} ${bottom} ${a.align === 'left' ? '0' : 'auto'}`)
   } else {
@@ -185,18 +193,7 @@ export function shadowLayerStyles(a: ImgAttrs, box: { w: number; h: number }) {
 
 // ───────────── drop geometry ─────────────
 const coordsAt = (view: EditorView, pos: number, side = 1) => { try { return view.coordsAtPos(pos, side) } catch { return null } }
-
-/**
- * Top (client px) of the line that starts at `pos`, from its first character: at a line start,
- * coordsAtPos may instead report a page-break spacer or a picture sitting at the same position.
- */
-function lineTopAt(view: EditorView, pos: number): number | null {
-  const doc = view.state.doc
-  const end = doc.resolve(pos).end()
-  let q = pos
-  for (let n = doc.nodeAt(q); n && !n.isText && q < end; n = doc.nodeAt(q)) q += n.nodeSize
-  return (q < end ? coordsAt(view, q + 1, -1) : coordsAt(view, pos))?.top ?? null
-}
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(Math.max(lo, hi), v))
 
 /** Left edge (client px) and width (CSS px) of the text box of the textblock containing `pos`. */
 function textBox(view: EditorView, pos: number, zoom: number): { left: number; width: number } | null {
@@ -215,32 +212,6 @@ function lineStartAt(view: EditorView, $in: ResolvedPos, y: number, zoom: number
   const box = textBox(view, $in.pos, zoom)
   const p = box && view.posAtCoords({ left: box.left + 1, top: y })?.pos
   return p != null && p >= $in.start() && p <= $in.end() ? p : null
-}
-
-/**
- * Anchor of a wrapped picture whose top is at client `top`: the start of the lowest line whose top
- * is at or above it (within the MIN_Y snap), so `y` ≥ 0. Dropped in the space between two
- * paragraphs, it hangs from the previous paragraph's last line — if that is on the same page; below
- * a paragraph's last line, a top-and-bottom picture goes after the paragraph's text instead.
- */
-function wrapAnchor(view: EditorView, $hit: ResolvedPos, top: number, wrap: ImgWrap, zoom: number): { pos: number; lineTop: number } | null {
-  const at = (pos: number | null) => { const lineTop = pos == null ? null : lineTopAt(view, pos); return lineTop != null ? { pos: pos!, lineTop } : null }
-  const lastLine = ($b: ResolvedPos) => {
-    const end = coordsAt(view, $b.end())
-    return end && at(lineStartAt(view, $b, (end.top + end.bottom) / 2, zoom))
-  }
-  const end = coordsAt(view, $hit.end())
-  if (end && top > end.bottom) return wrap === 'topBottom' ? at($hit.end()) : lastLine($hit)
-  const line = at(lineStartAt(view, $hit, top + 2, zoom))
-  // Hung from this line, the picture's top would be at lineTop + its distance from text.
-  if (!line || line.lineTop + TEXT_DISTANCE[wrap].top * zoom <= top + MIN_Y * zoom) return line
-  // `top` is above that (paragraph spacing): anchor on the line before, on the same page.
-  const edTop = view.dom.getBoundingClientRect().top
-  const samePage = (l: { lineTop: number } | null) => !!l && pageAt((l.lineTop - edTop) / zoom) === pageAt((top - edTop) / zoom)
-  const prev = $hit.before() - 1
-  const $prev = prev > 0 ? view.state.doc.resolve(prev) : null
-  const before = line.pos > $hit.start() ? at(lineStartAt(view, $hit, line.lineTop - 2, zoom)) : $prev?.parent.inlineContent ? lastLine($prev) : null
-  return before && samePage(before) ? before : line
 }
 
 /** Moves the picture at `from` to `to` (same spot: only new `attrs`), keeping it selected. */
@@ -262,47 +233,9 @@ function movePicture(view: EditorView, from: number, to: number, attrs: Record<s
   view.dispatch(tr.setSelection(NodeSelection.create(tr.doc, from)))
 }
 
-/**
- * After a move the text reflows and re-paginates (the picture left its old spot, wrapped lines
- * re-wrap, widow / orphan control may carry a line over), so measure where the selected picture
- * really landed and correct it: a new `y`, or — when its line moved below the wanted top — the line
- * above as the anchor. Synchronous (ProseMirror updates the DOM on dispatch, measuring forces
- * layout), so each correction is adjacent to the move and joins its undo step.
- */
-function settlePicture(view: EditorView, wantTop: number) {
-  for (let pass = 0; pass < 4; pass++) {
-    const sel = view.state.selection
-    if (!(sel instanceof NodeSelection) || sel.node.type.name !== 'image') return
-    const dom = view.nodeDOM(sel.from) as HTMLElement | null
-    if (!dom || dom.nodeType !== 1) return
-    const ed = view.dom.getBoundingClientRect()
-    const zoom = ed.width / ((view.dom as HTMLElement).offsetWidth || 1) || 1
-    const off = wantTop - (dom.getBoundingClientRect().top - ed.top) / zoom
-    if (Math.abs(off) < 2) return
-    const attrs = sel.node.attrs as ImgAttrs
-    const y = (attrs.y || 0) + off
-    if (y >= 0) {
-      movePicture(view, sel.from, sel.from, { ...attrs, y: y < MIN_Y ? null : Math.round(y) })
-    } else {
-      const top = ed.top + wantTop * zoom
-      const box = textBox(view, sel.from, zoom)
-      const hit = box && view.posAtCoords({ left: box.left + 1, top: top + 2 })
-      const $hit = hit && view.state.doc.resolve(hit.pos)
-      const anchor = $hit?.parent.inlineContent && attrs.wrap ? wrapAnchor(view, $hit, top, attrs.wrap, zoom) : null
-      if (!anchor || anchor.pos === sel.from || anchor.pos === sel.from + 1) return
-      const ny = Math.max(0, Math.round((top - anchor.lineTop) / zoom - TEXT_DISTANCE[attrs.wrap!].top))
-      movePicture(view, sel.from, anchor.pos, { ...attrs, y: ny < MIN_Y ? null : ny })
-    }
-    relayoutNow(view)
-  }
-}
-
 // ───────────── node view ─────────────
-interface DropTarget {
-  pos: number
-  attrs: Pick<ImgAttrs, 'x' | 'align' | 'y'>
-  /** Where the picture's top should end up (px from the top of the editor), to correct `y` after the move. */
-  wantTop?: number
+/** Where a dragged picture lands: a spot on a page (a pinned picture), or a line (in-line pictures, Web Layout). */
+type Drop = ({ page: number; x: number; y: number } | { pos: number; attrs: Partial<ImgAttrs> }) & {
   /** Where the dashed drop outline is drawn (client px). */
   preview: { left: number; top: number }
 }
@@ -318,85 +251,107 @@ export function setShapeCropMode(on: boolean) {
 }
 export function onCropMode(f: () => void) { cropListeners.add(f); return () => { cropListeners.delete(f) } }
 
-class PictureView implements NodeView {
+/** Attributes that move or resize a picture: a change places it again. */
+const PLACING = ['page', 'x', 'y', 'wrap', 'align', 'width', 'height', 'aspect', 'shape', 'vshape']
+
+class PictureView implements NodeView, Floating {
+  /** In-line: the picture itself. Wrapped: only the anchor (empty); the picture is drawn by a carrier (floats.ts). */
   dom: HTMLElement
+  /** The picture as drawn (`.wpic`). */
+  el: HTMLElement
   img: HTMLImageElement
+  readonly uid = nextUid()
+  place: { x: number | null; y: number } | null = null
+  private readonly wrapped: boolean
   private shadow: HTMLElement
-  private node: PMNode
   private natural: { w: number; h: number } | undefined
   private panning = false
   private radiusHandle: HTMLElement
 
-  constructor(node: PMNode, private view: EditorView, private getPos: () => number | undefined) {
-    this.node = node
-    this.dom = document.createElement('span')
-    this.dom.className = 'wpic'
-    this.dom.contentEditable = 'false'
+  constructor(public node: PMNode, readonly view: EditorView, private readonly pos: () => number | undefined) {
+    this.wrapped = !!node.attrs.wrap
+    this.el = document.createElement('span')
+    this.el.className = 'wpic'
+    this.el.contentEditable = 'false'
     this.shadow = document.createElement('span')
     this.shadow.className = 'wpic-shadow'
     this.shadow.appendChild(document.createElement('span'))
-    this.dom.appendChild(this.shadow)
+    this.el.appendChild(this.shadow)
     this.img = document.createElement('img')
     this.img.draggable = false
     this.img.addEventListener('load', () => {
       this.natural = { w: this.img.naturalWidth, h: this.img.naturalHeight }
       this.render()
+      if (this.wrapped) requestPlacement(this.view)
     })
-    this.dom.appendChild(this.img)
+    this.el.appendChild(this.img)
     // Side handles (n, e, s, w) only show on shapes: pictures always keep their proportions.
     for (const corner of ['nw', 'ne', 'sw', 'se', 'n', 'e', 's', 'w']) {
       const h = document.createElement('span')
       h.className = `wpic-handle ${corner}`
       h.addEventListener('pointerdown', (e) => this.resize(e, corner))
-      this.dom.appendChild(h)
+      this.el.appendChild(h)
     }
     // Corner-radius handle (only for «Στρογγυλεμένο»): drag it diagonally, like Canva.
     this.radiusHandle = document.createElement('span')
     this.radiusHandle.className = 'wpic-radius'
     this.radiusHandle.appendChild(document.createElement('span')).className = 'wpic-radius-tip'
     this.radiusHandle.addEventListener('pointerdown', (e) => this.dragRadius(e))
-    this.dom.appendChild(this.radiusHandle)
+    this.el.appendChild(this.radiusHandle)
     const hint = document.createElement('span')
     hint.className = 'wpic-pan-hint'
-    this.dom.appendChild(hint)
+    this.el.appendChild(hint)
     this.labels()
     this.offLang = onLangChange(() => this.labels())
     this.offCrop = onCropMode(() => this.render())
-    this.dom.addEventListener('dblclick', (e) => {
+    this.el.addEventListener('dblclick', (e) => {
       e.preventDefault()
       // Keep the picture selected (so its ribbon tab stays open) while panning.
       const pos = this.getPos()
       if (pos != null) this.view.dispatch(this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, pos)))
       this.setPanning(!this.panning)
     })
-    this.dom.addEventListener('pointerdown', (e) => (this.panning ? this.pan(e) : this.drag(e)))
+    this.el.addEventListener('pointerdown', (e) => (this.panning ? this.pan(e) : this.drag(e)))
+    if (this.wrapped) {
+      this.dom = document.createElement('span')
+      this.dom.className = 'wpic-anchor'
+      this.dom.contentEditable = 'false'
+      registerFloating(this)
+    } else this.dom = this.el
     this.render()
     // Once ProseMirror has put the picture in its paragraph, render again with that paragraph's line height.
     queueMicrotask(() => this.render())
   }
 
+  getPos() { return this.pos() }
   private get attrs() { return this.node.attrs as ImgAttrs }
+  box() { return displaySize(this.attrs, this.natural) }
+  distTop() { return this.attrs.wrap ? TEXT_DISTANCE[this.attrs.wrap].top : 0 }
 
   private offLang: () => void
   /** Tooltips in the UI language (re-applied when the language changes). */
   private labels() {
     this.radiusHandle.title = t('pic.radiusTitle')
-    ;(this.dom.querySelector('.wpic-pan-hint') as HTMLElement).textContent = t('pic.panHint')
+    ;(this.el.querySelector('.wpic-pan-hint') as HTMLElement).textContent = t('pic.panHint')
   }
   private offCrop: () => void
-  destroy() { this.offLang(); this.offCrop() }
+  destroy() {
+    this.offLang()
+    this.offCrop()
+    if (this.wrapped) { unregisterFloating(this); this.el.remove() }
+  }
 
-  private render() {
+  render() {
     const a = this.attrs
     const box = displaySize(a, this.natural)
     // Shapes are redrawn at their exact size, so outlines never stretch.
     const src = a.vshape ? shapeSrc(a.vshape, box.w, box.h) : a.src
     if (this.img.getAttribute('src') !== src) this.img.src = src
     this.img.alt = a.alt || ''
-    this.dom.classList.toggle('wshape', !!a.vshape)
-    this.dom.classList.toggle('cropping', !!a.vshape && cropMode && !isLine(a.vshape.k))
-    const st = pictureStyles(a, box, { lineHeight: this.lineHeight() })
-    this.dom.setAttribute('style', st.wrap)
+    this.el.classList.toggle('wshape', !!a.vshape)
+    this.el.classList.toggle('cropping', !!a.vshape && cropMode && !isLine(a.vshape.k))
+    const st = pictureStyles(a, box, { lineHeight: this.lineHeight(), place: this.wrapped ? this.place : null })
+    this.el.setAttribute('style', st.wrap)
     this.img.setAttribute('style', `${st.img};position:relative;z-index:1`)
     const sl = shadowLayerStyles(a, box)
     this.shadow.style.display = sl ? '' : 'none'
@@ -404,13 +359,14 @@ class PictureView implements NodeView {
       this.shadow.setAttribute('style', sl.outer)
       ;(this.shadow.firstChild as HTMLElement).setAttribute('style', sl.inner)
     }
-    this.dom.dataset.wrap = a.wrap || 'inline'
+    this.el.dataset.wrap = a.wrap || 'inline'
+    this.el.dataset.pinned = this.wrapped && isPinned(this.node) ? '1' : ''
     this.placeRadiusHandle(box, radiusPx(a.radius, box))
   }
 
-  /** Line height (px) of the paragraph the picture is anchored in, once it is in the document. */
+  /** Line height (px) of the paragraph the picture is drawn in, once it is in the document. */
   private lineHeight(): number | undefined {
-    const p = this.dom.parentElement
+    const p = this.el.closest('p, h1, h2, h3, h4, h5, h6, pre, li') ?? this.el.parentElement
     if (!p) return undefined
     const cs = getComputedStyle(p)
     const lh = parseFloat(cs.lineHeight)
@@ -420,12 +376,14 @@ class PictureView implements NodeView {
   /** The handle sits on the diagonal, inside the top-left corner, at the radius distance. */
   private placeRadiusHandle(box: { w: number; h: number }, r: number) {
     const rounded = this.attrs.shape === 'rounded'
-    this.dom.classList.toggle('rounded', rounded)
+    this.el.classList.toggle('rounded', rounded)
     if (!rounded) return
     const d = Math.max(16, Math.min(r, Math.min(box.w, box.h) / 2))
     this.radiusHandle.style.left = `${d}px`
     this.radiusHandle.style.top = `${d}px`
   }
+
+  private zoom() { return this.el.getBoundingClientRect().width / (this.el.offsetWidth || 1) || 1 }
 
   private dragRadius(e: PointerEvent) {
     e.preventDefault()
@@ -433,11 +391,11 @@ class PictureView implements NodeView {
     const a = this.attrs
     const box = displaySize(a, this.natural)
     const minSide = Math.min(box.w, box.h) || 1
-    const zoom = this.dom.getBoundingClientRect().width / (this.dom.offsetWidth || 1) || 1
+    const zoom = this.zoom()
     const x0 = e.clientX, y0 = e.clientY
     const r0 = radiusPx(a.radius, box)
     const tip = this.radiusHandle.firstChild as HTMLElement
-    this.dom.classList.add('radius-drag')
+    this.el.classList.add('radius-drag')
     const calc = (ev: PointerEvent) => {
       // Project the drag onto the corner's diagonal: down-right = rounder.
       const along = ((ev.clientX - x0) + (ev.clientY - y0)) / 2 / zoom
@@ -456,7 +414,7 @@ class PictureView implements NodeView {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', up)
-      this.dom.classList.remove('radius-drag')
+      this.el.classList.remove('radius-drag')
       this.setAttrs({ radius: calc(ev) })
     }
     window.addEventListener('pointermove', move)
@@ -475,7 +433,7 @@ class PictureView implements NodeView {
   private setPanning(on: boolean) {
     const canPan = !!aspectValue(this.attrs.shape === 'circle' ? '1:1' : this.attrs.aspect) || this.attrs.shape !== 'rect'
     this.panning = on && canPan
-    this.dom.classList.toggle('panning', this.panning)
+    this.el.classList.toggle('panning', this.panning)
     if (this.panning) {
       const esc = (e: KeyboardEvent) => { if (e.key === 'Escape' || e.key === 'Enter') { this.setPanning(false); document.removeEventListener('keydown', esc, true) } }
       document.addEventListener('keydown', esc, true)
@@ -507,36 +465,36 @@ class PictureView implements NodeView {
   }
 
   /**
-   * Press selects the picture; dragging moves it. The drop point picks the line the
-   * picture's top lands on (it's anchored at that line's start) and its horizontal spot.
+   * Press selects the picture; dragging moves it — a wrapped picture to exactly where it is
+   * released (kept inside one page's text area), an in-line one into the line under it.
    * On touch, the first tap only selects, so a swipe over a picture still scrolls.
    */
   private drag(e: PointerEvent) {
     if (e.button !== 0 || !this.view.editable || (e.target as HTMLElement).closest('.wpic-handle, .wpic-radius')) return
     const pos = this.getPos()
     if (pos == null) return
-    const wasSelected = this.dom.classList.contains('selected')
+    const wasSelected = this.el.classList.contains('selected')
     e.preventDefault()
     this.view.focus()
     this.view.dispatch(this.view.state.tr.setSelection(NodeSelection.create(this.view.state.doc, pos)))
     if (e.pointerType === 'touch' && !wasSelected) return
     const x0 = e.clientX, y0 = e.clientY
-    const r0 = this.dom.getBoundingClientRect()
-    const zoom = r0.width / (this.dom.offsetWidth || 1) || 1
+    const r0 = this.el.getBoundingClientRect()
+    const zoom = this.zoom()
     const marker = document.createElement('div')
     marker.className = 'wpic-drop'
     let moving = false
-    let target: DropTarget | null = null
+    let target: Drop | null = null
     const move = (ev: PointerEvent) => {
       if (!moving) {
         if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 5) return
         moving = true
-        this.dom.classList.add('moving')
+        this.el.classList.add('moving')
         document.body.appendChild(marker)
       }
       const dx = ev.clientX - x0, dy = ev.clientY - y0
-      this.dom.style.transform = `translate(${dx / zoom}px, ${dy / zoom}px)`
-      target = this.dropTarget(r0.left + dx, r0.top + dy, r0, zoom)
+      this.el.style.transform = `translate(${dx / zoom}px, ${dy / zoom}px)`
+      target = this.dropAt(r0.left + dx, r0.top + dy, r0, zoom)
       marker.style.display = target ? '' : 'none'
       if (target) Object.assign(marker.style, { left: `${target.preview.left}px`, top: `${target.preview.top}px`, width: `${r0.width}px`, height: `${r0.height}px` })
     }
@@ -545,18 +503,9 @@ class PictureView implements NodeView {
       window.removeEventListener('pointerup', end)
       window.removeEventListener('pointercancel', end)
       marker.remove()
-      this.dom.classList.remove('moving')
-      this.dom.style.transform = ''
-      if (!moving || !target || ev.type !== 'pointerup') return
-      // The live preview is measured with the picture still in its old spot. The drop is measured
-      // on the text as it will be once the picture has left it — reflowed and re-paginated — so the
-      // picture lands where it was released, whatever moved in the meantime.
-      this.dom.classList.add('lifted')
-      relayoutNow(this.view)
-      const dx = ev.clientX - x0, dy = ev.clientY - y0
-      const exact = this.dropTarget(r0.left + dx, r0.top + dy, r0, zoom)
-      this.dom.classList.remove('lifted')
-      this.moveTo(exact ?? target)
+      this.el.classList.remove('moving')
+      this.el.style.transform = ''
+      if (moving && target && ev.type === 'pointerup') this.moveTo(target)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', end)
@@ -564,65 +513,50 @@ class PictureView implements NodeView {
   }
 
   /** Where a picture of client `size` whose top-left corner is at (left, top) (client px) would land. */
-  private dropTarget(left: number, top: number, size: { width: number; height: number }, zoom: number): DropTarget | null {
+  private dropAt(left: number, top: number, size: { width: number; height: number }, zoom: number): Drop | null {
     const view = this.view
     const a = this.attrs
-    const edRect = view.dom.getBoundingClientRect()
-    // A wrapped picture, with its distance from the text, stays inside one page's text area.
-    if (a.wrap) {
-      const d = TEXT_DISTANCE[a.wrap]
-      top = edRect.top + (fitOnPage((top - edRect.top) / zoom - d.top, size.height / zoom + d.top + d.bottom) + d.top) * zoom
+    const ed = view.dom.getBoundingClientRect()
+    const w = size.width / zoom, h = size.height / zoom
+    if (a.wrap && paginationConfig.enabled) {
+      // Free: the page the picture is mostly over, and inside that page's text area — never between pages.
+      const { pitch: P, contentHeight: C } = paginationConfig
+      const cx = (left - ed.left) / zoom, cy = (top - ed.top) / zoom
+      const page = clamp(Math.floor((cy + h / 2) / P), 0, layoutStore.pageCount - 1)
+      const y = Math.round(clamp(cy - page * P, 0, C - h))
+      const x = Math.round(clamp(cx, 0, (view.dom as HTMLElement).clientWidth - w))
+      return { page, x, y, preview: { left: ed.left + x * zoom, top: ed.top + (page * P + y) * zoom } }
     }
-    const probe = {
-      left: Math.max(edRect.left + 2, Math.min(edRect.right - 2, left + size.width / 2)),
-      top: Math.max(edRect.top + 2, Math.min(edRect.bottom - 2, top + 2)),
-    }
-    const hit = view.posAtCoords(probe)
+    // In-line pictures, and Web Layout (no pages): into the line under the picture's top.
+    const hit = view.posAtCoords({ left: clamp(left + size.width / 2, ed.left + 2, ed.right - 2), top: clamp(top + 2, ed.top + 2, ed.bottom - 2) })
     if (!hit) return null
     const $hit = view.state.doc.resolve(hit.pos)
     if (!$hit.parent.inlineContent || $hit.depth === 0) return null
-    // In-line pictures go exactly where they are dropped. A wrapped one is anchored at the start of
-    // a line and `y` is measured from that line (OOXML relativeFrom="line"), so it moves with that text.
-    const anchor = a.wrap ? wrapAnchor(view, $hit, top, a.wrap, zoom) : { pos: hit.pos, lineTop: coordsAt(view, hit.pos)?.top ?? top }
-    if (!anchor) return null
-    const box = textBox(view, anchor.pos, zoom)
+    if (!a.wrap) return { pos: hit.pos, attrs: {}, preview: { left, top: coordsAt(view, hit.pos)?.top ?? top } }
+    const start = lineStartAt(view, $hit, top + 2, zoom) ?? hit.pos
+    const box = textBox(view, start, zoom)
     if (!box) return null
-
-    // Horizontal spot, snapped to the left / centre / right when close.
-    const w = size.width / zoom
-    const maxX = Math.max(0, box.width - w)
-    let x: number | null = Math.max(0, Math.min(maxX, (left - box.left) / zoom))
-    let align: ImgAlign = a.align
-    const SNAP = 10
-    if (a.wrap === 'square') {
-      align = squareSide(x, w, box.width)
-      if (x < SNAP) { x = null; align = 'left' } else if (maxX - x < SNAP) { x = null; align = 'right' }
-    } else if (a.wrap === 'topBottom') {
-      align = 'left'
-      if (x < SNAP) x = null
-      else if (maxX - x < SNAP) { x = null; align = 'right' }
-      else if (Math.abs(x - maxX / 2) < SNAP) { x = null; align = 'center' }
-    } else x = a.x
-    if (x != null) x = Math.round(x)
-    if (!a.wrap) return { pos: anchor.pos, attrs: { x, align, y: null }, preview: { left, top: anchor.lineTop } }
-
-    // Free vertical spot: the picture lands exactly where it is dropped (not on the line's top).
-    const px = x ?? (align === 'left' ? 0 : align === 'right' ? maxX : maxX / 2)
-    const y = Math.max(0, Math.round((top - anchor.lineTop) / zoom - TEXT_DISTANCE[a.wrap].top))
-    return {
-      pos: anchor.pos, attrs: { x, align, y: y < MIN_Y ? null : y },
-      wantTop: (top - edRect.top) / zoom,
-      preview: { left: box.left + px * zoom, top },
-    }
+    const x = Math.round(clamp((left - box.left) / zoom, 0, box.width - w))
+    const align = a.wrap === 'square' ? squareSide(x, w, box.width) : a.align
+    return { pos: start, attrs: { page: null, x, y: null, align }, preview: { left: box.left + x * zoom, top: coordsAt(view, start)?.top ?? top } }
   }
 
-  private moveTo(target: DropTarget) {
+  private moveTo(drop: Drop) {
+    const view = this.view
     const from = this.getPos()
     if (from == null) return
-    movePicture(this.view, from, target.pos, { ...this.node.attrs, ...target.attrs })
-    if (target.wantTop == null) return
-    relayoutNow(this.view)
-    settlePicture(this.view, target.wantTop)
+    const a = this.attrs
+    if ('page' in drop) {
+      const attrs = { ...a, page: drop.page, x: drop.x, y: drop.y, align: a.wrap === 'square' ? squareSide(drop.x, this.box().w, (view.dom as HTMLElement).clientWidth) : a.align }
+      // The node moves into the paragraph beside its new spot (Word's anchor: it is exported with it,
+      // and deleting that paragraph deletes the picture). The picture itself is placed by floats.ts.
+      this.el.classList.add('lifted')
+      const blk = anchorBlock(view, drop.page, drop.page * paginationConfig.pitch + drop.y - this.distTop(), a.wrap!)
+      this.el.classList.remove('lifted')
+      const $from = view.state.doc.resolve(from)
+      movePicture(view, from, !blk || blk.pos === $from.before() ? from : blk.pos + 1, attrs)
+    } else movePicture(view, from, drop.pos, { ...a, ...drop.attrs })
+    relayoutNow(view)
   }
 
   private resize(e: PointerEvent, corner: string) {
@@ -630,8 +564,11 @@ class PictureView implements NodeView {
     e.stopPropagation()
     const x0 = e.clientX, y0 = e.clientY
     const start = displaySize(this.attrs, this.natural)
-    const zoom = this.dom.getBoundingClientRect().width / (this.dom.offsetWidth || 1) || 1
+    const zoom = this.zoom()
     const colW = (this.view.dom as HTMLElement).clientWidth
+    // A pinned picture stays inside one page's text area.
+    const pinned = this.wrapped && isPinned(this.node) && paginationConfig.enabled
+    const maxH = pinned ? paginationConfig.contentHeight : Infinity
     const ratio = start.h / start.w
     // Which edges this handle moves: ±1 per axis, 0 = that axis stays.
     const dx = corner.includes('w') ? -1 : corner.includes('e') ? 1 : 0
@@ -643,8 +580,8 @@ class PictureView implements NodeView {
     // Shapes resize freely (Shift keeps the proportions); pictures always keep theirs.
     const calc = (ev: PointerEvent): { w: number; h: number; v?: VShape } => {
       let w = dx ? Math.round(Math.max(24, Math.min(colW, start.w + (dx * (ev.clientX - x0)) / zoom))) : start.w
-      let h = dy ? Math.round(Math.max(vs && isLine(vs.k) ? 12 : 16, start.h + (dy * (ev.clientY - y0)) / zoom)) : start.h
-      if (!vs) { if (!dx) w = Math.round(h / ratio); return { w, h: Math.round(w * ratio) } }
+      let h = dy ? Math.round(Math.max(vs && isLine(vs.k) ? 12 : 16, Math.min(maxH, start.h + (dy * (ev.clientY - y0)) / zoom))) : start.h
+      if (!vs) { if (!dx) w = Math.round(h / ratio); w = Math.min(w, Math.floor(maxH / ratio)); return { w, h: Math.round(w * ratio) } }
       if (!crop) {
         if (ev.shiftKey) { if (dx) h = Math.round(w * ratio); else w = Math.round(h / ratio) }
         return { w, h, v: vs }
@@ -652,44 +589,56 @@ class PictureView implements NodeView {
       // Cropping: the full shape keeps its size; the dragged edge cuts into it (or uncovers it again).
       const { fw, fh } = full!
       const c = { ...c0 }
-      const clamp = (n: number, max: number) => Math.max(0, Math.min(max, n))
-      if (dx > 0) c.r = clamp(1 - c.l - w / fw, 0.95 - c.l)
-      if (dx < 0) c.l = clamp(1 - c.r - w / fw, 0.95 - c.r)
-      if (dy > 0) c.b = clamp(1 - c.t - h / fh, 0.95 - c.t)
-      if (dy < 0) c.t = clamp(1 - c.b - h / fh, 0.95 - c.b)
+      const clampC = (n: number, max: number) => Math.max(0, Math.min(max, n))
+      if (dx > 0) c.r = clampC(1 - c.l - w / fw, 0.95 - c.l)
+      if (dx < 0) c.l = clampC(1 - c.r - w / fw, 0.95 - c.r)
+      if (dy > 0) c.b = clampC(1 - c.t - h / fh, 0.95 - c.t)
+      if (dy < 0) c.t = clampC(1 - c.b - h / fh, 0.95 - c.b)
       w = Math.round(fw * (1 - c.l - c.r)); h = Math.round(fh * (1 - c.t - c.b))
       const nv: VShape = { ...vs }
       if (hasCrop(c)) nv.crop = c; else delete nv.crop
       return { w, h, v: nv }
     }
+    // On a pinned picture the opposite corner / edge stays where it is, as in Word.
+    const shift = (w: number, h: number) => ({ x: pinned && dx < 0 ? start.w - w : 0, y: pinned && dy < 0 ? start.h - h : 0 })
     const move = (ev: PointerEvent) => {
       const { w, h, v } = calc(ev)
       this.img.style.width = `${w}px`
       this.img.style.height = `${h}px`
       if (v) this.img.src = shapeSrc(v, w, h)
+      const s = shift(w, h)
+      this.el.style.transform = s.x || s.y ? `translate(${s.x}px, ${s.y}px)` : ''
     }
     const up = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      this.el.style.transform = ''
       const { w, h, v } = calc(ev)
-      this.setAttrs(v ? { width: w, height: h, vshape: v, src: shapeSrc(v, w, h) } : { width: w, height: h })
+      const patch: Partial<ImgAttrs> = v ? { width: w, height: h, vshape: v, src: shapeSrc(v, w, h) } : { width: w, height: h }
+      const s = shift(w, h)
+      const a = this.attrs
+      if (s.x && a.x != null) patch.x = Math.max(0, Math.round(a.x + s.x))
+      if (s.y) patch.y = Math.max(0, Math.round((a.y ?? 0) + s.y))
+      this.setAttrs(patch)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
   }
 
   update(node: PMNode) {
-    if (node.type !== this.node.type) return false
+    if (node.type !== this.node.type || !!node.attrs.wrap !== this.wrapped) return false
+    const moved = PLACING.some((k) => node.attrs[k] !== this.node.attrs[k])
     this.node = node
     this.render()
+    if (this.wrapped && moved) requestPlacement(this.view)
     return true
   }
 
-  selectNode() { this.dom.classList.add('selected') }
+  selectNode() { this.el.classList.add('selected') }
   deselectNode() {
-    this.dom.classList.remove('selected')
+    this.el.classList.remove('selected')
     // Defer: a re-selection of this same picture (dblclick) must not cancel panning.
-    setTimeout(() => { if (!this.dom.classList.contains('selected')) this.setPanning(false) }, 0)
+    setTimeout(() => { if (!this.el.classList.contains('selected')) this.setPanning(false) }, 0)
   }
   stopEvent(e: Event) {
     const t = e.target as HTMLElement
@@ -698,6 +647,45 @@ class PictureView implements NodeView {
   }
   ignoreMutation() { return true }
 }
+
+const isWrapped = (n: PMNode | null | undefined) => n?.type.name === 'image' && !!n.attrs.wrap
+
+/** A copy of pasted / dropped content whose wrapped pictures are no longer pinned: they show where they land. */
+function unpin(f: Fragment): Fragment {
+  const out: PMNode[] = []
+  f.forEach((n) => out.push(isWrapped(n) && n.attrs.page != null ? n.type.create({ ...n.attrs, page: null, x: null, y: null }, n.content, n.marks)
+    : n.isLeaf ? n : n.copy(unpin(n.content))))
+  return Fragment.from(out)
+}
+
+/**
+ * A wrapped picture's node is an invisible anchor in the text: the caret steps over it, Backspace /
+ * Delete next to it delete the text beyond it, and typing or Enter while the picture is selected
+ * does nothing — so a picture elsewhere on the page is never deleted or replaced by accident.
+ */
+const anchorKeys = () => new Plugin({
+  key: new PluginKey('picture-anchors'),
+  props: {
+    handleKeyDown(view, e) {
+      const { state } = view
+      const sel = state.selection
+      if (sel instanceof NodeSelection) return isWrapped(sel.node) && e.key === 'Enter'
+      if (!sel.empty || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return false
+      const back = e.key === 'Backspace' || e.key === 'ArrowLeft'
+      if (!back && e.key !== 'Delete' && e.key !== 'ArrowRight') return false
+      let p = sel.from
+      if (back) while (isWrapped(state.doc.resolve(p).nodeBefore)) p--
+      else while (isWrapped(state.doc.resolve(p).nodeAfter)) p++
+      if (p !== sel.from) view.dispatch(state.tr.setSelection(TextSelection.create(state.doc, p)))
+      return false
+    },
+    handleTextInput(view) {
+      const sel = view.state.selection
+      return sel instanceof NodeSelection && isWrapped(sel.node)
+    },
+    transformPasted: (slice) => new Slice(unpin(slice.content), slice.openStart, slice.openEnd),
+  },
+})
 
 const attr = (name: string, def: unknown, parse?: (v: string) => unknown) => ({
   default: def,
@@ -743,6 +731,7 @@ export const Picture = Image.extend({
       radius: attr('radius', DEFAULT_RADIUS, clampRadius),
       x: attr('x', null, (v) => (v === '' || !Number.isFinite(Number(v)) ? null : Number(v))),
       y: attr('y', null, (v) => (v === '' || !Number.isFinite(Number(v)) ? null : Number(v))),
+      page: attr('page', null, (v) => (v === '' || !Number.isInteger(Number(v)) ? null : Number(v))),
       vshape: attr('vshape', null, parseVShape),
       // One style attribute for HTML export / clipboard, computed from all of the above.
       _style: {
@@ -750,7 +739,8 @@ export const Picture = Image.extend({
         parseHTML: () => null,
         renderHTML: (a: Record<string, any>) => {
           const box = displaySize(a as ImgAttrs)
-          const st = pictureStyles(a as ImgAttrs, box, { withFilter: true })
+          // Pages don't exist outside Print Layout: a pinned picture goes on its anchor's line.
+          const st = pictureStyles({ ...a, y: a.page != null ? null : a.y } as ImgAttrs, box, { withFilter: true })
           const out: Record<string, string> = { style: `${st.wrap};${st.img}`, width: String(box.w), height: String(box.h) }
           if (a.wrap) out['data-wrap'] = a.wrap
           if (a.align !== 'center') out['data-align'] = a.align
@@ -762,6 +752,7 @@ export const Picture = Image.extend({
           if (a.radius != null && a.radius !== DEFAULT_RADIUS) out['data-radius'] = String(a.radius)
           if (a.x != null) out['data-x'] = String(Math.round(a.x))
           if (a.y) out['data-y'] = String(Math.round(a.y))
+          if (a.page != null) out['data-page'] = String(a.page)
           if (a.vshape) out['data-vshape'] = JSON.stringify(a.vshape)
           return out
         },
@@ -776,6 +767,8 @@ export const Picture = Image.extend({
   addProseMirrorPlugins() {
     return [
       ...(this.parent?.() || []),
+      floatsPlugin(),
+      anchorKeys(),
       // Changing a selected picture's attributes (shape, shadow, wrap…) maps the node selection
       // to a text cursor, which would close the «Εικόνα» tab after every click. Keep it selected.
       new Plugin({
