@@ -139,7 +139,7 @@ export function App() {
   const viewRef = useRef(view)
   viewRef.current = view
   const [zoom, setZoomRaw] = useState(1)
-  const [showRuler, setShowRuler] = useState(true)
+  const [showRuler, setShowRuler] = useState(false)
   const [showMarks, setShowMarks] = useState(false)
   const [spellcheck, setSpellcheckRaw] = useState(() => proofConfig().live)
   const setSpellcheck = useCallback((b: boolean) => { setProofConfig({ live: b }); setSpellcheckRaw(b) }, [])

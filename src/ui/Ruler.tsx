@@ -1,4 +1,4 @@
-// Horizontal ruler (cm): shaded margins, draggable page margins and paragraph indents
+// Rulers (cm). Horizontal: shaded margins, draggable page margins and paragraph indents
 // (first-line ▽, hanging △, left-indent box, right indent △) — as in Word.
 import { useRef, type ReactElement } from 'react'
 import { mmToPx, pxToMm } from '../model/settings'
@@ -111,6 +111,56 @@ export function Ruler({ api }: { api: AppApi }) {
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+/** Vertical ruler beside one page: shaded top/bottom margins (draggable), cm counted from the top margin. */
+export function VRuler({ api, top }: { api: AppApi; top: number }) {
+  const { settings: s, zoom } = api
+  const pageH = mmToPx(s.height)
+  const mt = mmToPx(s.margins.top)
+  const mb = mmToPx(s.margins.bottom)
+  const z = (v: number) => v * zoom
+
+  const startDrag = (kind: 'top' | 'bottom', e: React.PointerEvent) => {
+    e.preventDefault()
+    const el = e.currentTarget as HTMLElement
+    el.setPointerCapture(e.pointerId)
+    const y0 = e.clientY
+    const init = kind === 'top' ? mt : mb
+    const move = (ev: PointerEvent) => {
+      const dy = ((ev.clientY - y0) / zoom) * (kind === 'top' ? 1 : -1)
+      const raw = init + dy
+      const px = ev.altKey ? raw : mmToPx(Math.round(pxToMm(raw) / SNAP_MM) * SNAP_MM)
+      const v = Math.max(0, Math.min(pageH - (kind === 'top' ? mb : mt) - 48, px))
+      api.setSettings({ ...s, margins: { ...s.margins, [kind]: Math.round(pxToMm(v) * 100) / 100 } })
+    }
+    const up = () => {
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      api.editor.commands.focus()
+    }
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+  }
+
+  const ticks: ReactElement[] = []
+  const cm = mmToPx(10)
+  for (let y = mt % (cm / 4); y <= pageH; y += cm / 4) {
+    const rel = Math.round(((y - mt) / cm) * 4) / 4
+    const whole = Math.abs(rel % 1) < 0.001
+    const half = Math.abs(Math.abs(rel % 1) - 0.5) < 0.001
+    if (whole && rel !== 0) ticks.push(<span key={y} className="rl-num" style={{ top: z(y) }}>{Math.abs(rel)}</span>)
+    else if (!whole) ticks.push(<span key={y} className={`rl-tick${half ? ' half' : ''}`} style={{ top: z(y) }} />)
+  }
+  return (
+    <div className="vruler no-print" style={{ top: z(top), height: z(pageH) }}>
+      <div className="rl-margin" style={{ top: 0, height: z(mt) }} />
+      <div className="rl-margin" style={{ bottom: 0, height: z(mb) }} />
+      {ticks}
+      <div className="rl-edge" style={{ top: z(mt) - 3 }} title={t('ruler.topMargin')} onPointerDown={(e) => startDrag('top', e)} />
+      <div className="rl-edge" style={{ top: z(pageH - mb) - 3 }} title={t('ruler.bottomMargin')} onPointerDown={(e) => startDrag('bottom', e)} />
     </div>
   )
 }

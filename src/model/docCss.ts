@@ -154,7 +154,7 @@ export function pageCss(s: DocSettings): string {
 export function printCss(paginated: boolean): string {
   return `@media print{
   html,body,#root{background:#fff !important;margin:0 !important;padding:0 !important;height:auto !important;overflow:visible !important}
-  .app-chrome,.no-print,.page-sheet,.page-hf,.hf-hit,.ruler-bar,.findbar,.toasts{display:none !important}
+  .app-chrome,.no-print,.page-sheet,.page-hf,.hf-hit,.ruler-bar,.vruler,.findbar,.toasts{display:none !important}
   .app,.workspace,.canvas-scroll,.canvas-zoom,.pages,.editor-column{display:block !important;position:static !important;
     width:auto !important;height:auto !important;min-height:0 !important;max-height:none !important;margin:0 !important;padding:0 !important;
     transform:none !important;overflow:visible !important;background:none !important;box-shadow:none !important}

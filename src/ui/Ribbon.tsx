@@ -7,13 +7,13 @@ import type { Editor } from '@tiptap/core'
 import { NodeSelection } from '@tiptap/pm/state'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import {
-  Undo2, Redo2, Save, FileText,
+  Undo2, Redo2, Save, FileText, Plus,
 } from 'lucide-react'
 import { ThemesMenu, ColorsMenu, FontsMenu, StyleSetGallery, ThemeThumb } from './ThemeTools'
 import { fontPairName, themeName, currentTheme, resolveColor } from '../model/themes'
 import { Btn, Group, Row, Col, Dropdown, MenuItem, MenuSep, MenuTitle, ColorGrid, Combo, NumField, Popover as PopoverList } from './controls'
 import type { AppApi } from './App'
-import { FONT_CHOICES, PARA_STYLES, fontHint, fontLabel, fontStack, styleName, type ParaStyle } from '../model/styles'
+import { PARA_STYLES, fontChoices, fontHint, fontLabel, fontStack, styleName, type ParaStyle } from '../model/styles'
 import { FONT_SIZES, currentFontFamily, currentFontSizePt, currentStyle, growFont, setFontSizePt, changeCase } from '../editor/format'
 import { BULLET_FORMATS, NUMBER_FORMATS } from '../editor/lists'
 import { MARGIN_PRESETS, PAPER_SIZES, withOrientation, withPaper, cmLabel, mmToPx } from '../model/settings'
@@ -21,14 +21,14 @@ import { modKey, isMac, isNative } from '../platform'
 import { MobileRibbon } from './MobileRibbon'
 import { CommandSearch, CMD_SELECTOR, type CmdEntry } from './CommandSearch'
 import { ShapeGallery, ShapeIcon, insertShape, changeKind } from './ShapeTools'
-import { LINE_WEIGHTS_PT, isLine, ptToPx, pxToPt, shapeSrc, type VShape } from '../editor/shapes'
-import { IMG_ASPECTS, IMG_SHADOWS, IMG_SHAPES, SHADOW, DEFAULT_RADIUS, aspectValue, clampRadius, displaySize, formatRadius, radiusToSlider, sliderToRadius, shapeClipCss, type ImgAttrs } from '../editor/image'
+import { LINE_WEIGHTS_PT, hasCrop, isLine, ptToPx, pxToPt, shapeSrc, type VShape } from '../editor/shapes'
+import { IMG_ASPECTS, IMG_SHADOWS, IMG_SHAPES, SHADOW, DEFAULT_RADIUS, aspectValue, clampRadius, displaySize, isShapeCropMode, setShapeCropMode, formatRadius, radiusToSlider, sliderToRadius, shapeClipCss, type ImgAttrs } from '../editor/image'
 import { Ill } from './illustrations'
 import type { BreakKind } from '../editor/nodes'
 import { insertTrainingImage } from './Training'
 import { t, fmtNum, fmtDate, fmtLongDate, numText } from '../i18n'
 
-type TabId = 'home' | 'insert' | 'design' | 'layout' | 'references' | 'review' | 'view' | 'table' | 'picture'
+type TabId = 'home' | 'insert' | 'design' | 'layout' | 'references' | 'view' | 'table' | 'picture'
 
 const I = 18 // small illustrated icon
 const B = 30 // big illustrated icon
@@ -109,7 +109,7 @@ function DesktopRibbon({ api }: { api: AppApi }) {
   const tabs: [TabId, string, boolean?][] = [['home', t('tab.home')], ['insert', t('tab.insert')]]
   if (inTable) tabs.push(['table', t('tab.table'), true])
   if (onImage) tabs.push(['picture', onShape ? t('tab.shape') : t('tab.picture'), true])
-  tabs.push(['design', t('tab.design')], ['layout', t('tab.layout')], ['references', t('tab.references')], ['review', t('tab.review')], ['view', t('tab.view')])
+  tabs.push(['design', t('tab.design')], ['layout', t('tab.layout')], ['references', t('tab.references')], ['view', t('tab.view')])
 
   return (
     <header className="app-chrome ribbon-wrap">
@@ -135,13 +135,12 @@ function DesktopRibbon({ api }: { api: AppApi }) {
           <button key={id} role="tab" aria-selected={tab === id} className={`tab${tab === id ? ' active' : ''}${ctx ? ' contextual' : ''}`} onClick={() => setTab(id)}>{label}</button>
         ))}
       </nav>
-      <div ref={ribbonRef} className="ribbon" role="toolbar" aria-label={t('ribbon.aria')}>
+      <div ref={ribbonRef} className={`ribbon${['insert', 'layout', 'references'].includes(tab) ? ' spread' : ''}`} role="toolbar" aria-label={t('ribbon.aria')}>
         {tab === 'home' && <HomeTab api={api} />}
         {tab === 'insert' && <InsertTab api={api} />}
         {tab === 'design' && <DesignTab api={api} />}
         {tab === 'layout' && <LayoutTab api={api} />}
         {tab === 'references' && <ReferencesTab api={api} />}
-        {tab === 'review' && <ReviewTab api={api} />}
         {tab === 'view' && <ViewTab api={api} />}
         {tab === 'table' && inTable && <TableTab api={api} />}
         {tab === 'picture' && onImage && (onShape ? <ShapeTab api={api} /> : <PictureTab api={api} />)}
@@ -153,7 +152,6 @@ function DesktopRibbon({ api }: { api: AppApi }) {
           <div data-cmd-tab="design" data-cmd-label={t('tab.design')}><DesignTab api={api} /></div>
           <div data-cmd-tab="layout" data-cmd-label={t('tab.layout')}><LayoutTab api={api} /></div>
           <div data-cmd-tab="references" data-cmd-label={t('tab.references')}><ReferencesTab api={api} /></div>
-          <div data-cmd-tab="review" data-cmd-label={t('tab.review')}><ReviewTab api={api} /></div>
           <div data-cmd-tab="view" data-cmd-label={t('tab.view')}><ViewTab api={api} /></div>
         </div>
       )}
@@ -177,7 +175,8 @@ function HomeTab({ api }: { api: AppApi }) {
       <Group label={t('g.font')} onLauncher={() => api.openDialog({ type: 'font' })}>
         <Col className="font-col">
           <Row>
-            <Combo title={t('font.family')} width={150} value={family} options={[...new Set([currentTheme.fonts.major, currentTheme.fonts.minor, ...FONT_CHOICES])]} editable={false} label={fontLabel}
+            <Combo title={t('font.family')} width={150} value={family} options={[...new Set([currentTheme.fonts.major, currentTheme.fonts.minor, ...fontChoices()])]} editable={false} label={fontLabel}
+              footer={(close) => <MenuItem icon={<Plus size={14} />} label={t('font.add')} onClick={() => { close(); api.openDialog({ type: 'addFont' }) }} />}
               renderOption={(o) => <span className="font-opt" style={{ fontFamily: fontStack(o) }} title={fontHint(o) || undefined}>{fontLabel(o)}{o === currentTheme.fonts.major && <small>{t('font.themeHeadings')}</small>}{o === currentTheme.fonts.minor && <small>{t('font.themeBody')}</small>}</span>}
               onCommit={(v) => c().setFontFamily(fontStack(v)).run()} />
             <Combo title={t('font.size')} width={54} value={numText(size)} options={FONT_SIZES.map((s) => numText(s))}
@@ -384,12 +383,21 @@ function InsertTab({ api }: { api: AppApi }) {
         <Dropdown big icon={ill('shapes', B)} label={t('ins.shapes')} title={t('ins.shapesTitle')} popClass="shape-pop">
           {(close) => <ShapeGallery onPick={(k) => { close(); insertShape(e, k) }} />}
         </Dropdown>
-        <Btn big icon={ill('signature', B)} label={t('ins.signature')} title={t('ins.signatureTitle')} onClick={() => api.openDialog({ type: 'signature' })} />
+        <Dropdown big icon={ill('signature', B)} label={t('ins.signature')} title={t('ins.signatureTitle')} onClick={() => api.openDialog({ type: 'signature' })}>
+          {(close) => (
+            <>
+              <MenuItem label={t('ins.signatureDraw')} onClick={() => { close(); api.openDialog({ type: 'signature' }) }} />
+              <MenuItem label={t('ins.signatureImage')} onClick={() => { close(); api.openDialog({ type: 'signature', mode: 'file' }) }} />
+              <MenuItem label={t('gov.menu')} onClick={() => { close(); api.openDialog({ type: 'govSign' }) }} />
+            </>
+          )}
+        </Dropdown>
         <Btn big icon={ill('link', B)} label={t('ins.link')} title={`${t('ins.link')} (${modKey}K)`} active={e.isActive('link')} onClick={() => api.openDialog({ type: 'link' })} />
       </Group>
       <Group label={t('g.pages')}>
         <Btn big icon={ill('pageBreak', B)} label={t('ins.pageBreak')} title={`${t('ins.pageBreak')} (${modKey}↵)`} onClick={() => c().setPageBreak().run()} />
-        <Btn big icon={ill('header', B)} label={t('ins.header')} title={t('ins.headerFooter')} onClick={() => api.openDialog({ type: 'headerFooter' })} />
+        <Btn big icon={ill('header', B)} label={t('ins.header')} title={t('ins.headerFooter')} onClick={() => api.openDialog({ type: 'headerFooter', focus: 'header' })} />
+        <Btn big icon={ill('footer', B)} label={t('ins.footer')} title={t('ins.headerFooter')} onClick={() => api.openDialog({ type: 'headerFooter', focus: 'footer' })} />
         <Dropdown big icon={ill('pageNumber', B)} label={t('ins.pageNumber')} title={t('ins.pageNumber')}>
           {(close) => (
             <>
@@ -618,11 +626,13 @@ function ReferencesTab({ api }: { api: AppApi }) {
           {(close) => <CaptionMenu api={api} kind="table" close={close} />}
         </Dropdown>
       </Group>
+      <ProofingGroup api={api} />
     </>
   )
 }
 
-function ReviewTab({ api }: { api: AppApi }) {
+// Proofing sits in the same tab as contents and captions: everything that finishes a document.
+function ProofingGroup({ api }: { api: AppApi }) {
   return (
     <Group label={t('g.proofing')}>
       <Btn big icon={ill('spelling', B)} label={t('rev.proof')} title={t('rev.proofTitle')} active={api.proofOpen} onClick={() => api.setProofOpen(!api.proofOpen)} />
@@ -892,6 +902,12 @@ const QUICK_STYLES: { fill: string | null; line: string | null }[] = [
   { fill: null, line: '#1AB3AC' }, { fill: '#243B3A', line: null },
 ]
 
+const CROP_ICON = (
+  <svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+    <path d="M9 3v20h20" /><path d="M3 9h20v20" stroke="var(--primary)" />
+  </svg>
+)
+
 function ShapeTab({ api }: { api: AppApi }) {
   const { editor: e } = api
   const a = e.getAttributes('image') as ImgAttrs
@@ -903,6 +919,10 @@ function ShapeTab({ api }: { api: AppApi }) {
   const cmToPx = (cm: number) => Math.round((cm / 2.54) * 96)
   const set = (patch: Partial<ImgAttrs>) => e.chain().focus().updateAttributes('image', patch).run()
   const setV = (patch: Partial<VShape>) => { const nv = { ...v, ...patch }; set({ vshape: nv, src: shapeSrc(nv, box.w, box.h) }) }
+  const [cropping, setCropping] = useState(isShapeCropMode)
+  const crop = (on: boolean) => { setShapeCropMode(on); setCropping(on) }
+  // Leaving the shape (or its tab) ends crop mode, like Word.
+  useEffect(() => () => setShapeCropMode(false), [])
   const setSize = (w: number, h: number) => {
     w = Math.max(12, Math.min(colW, Math.round(w))); h = Math.max(line ? 12 : 16, Math.round(h))
     set({ width: w, height: h, src: shapeSrc(v, w, h) })
@@ -949,6 +969,18 @@ function ShapeTab({ api }: { api: AppApi }) {
       </Group>
       <WrapPosition a={a} set={set} hint={t('shp.dragHint')} />
       <Group label={t('g.size')}>
+        {!line && (
+          <Col>
+            <Btn big active={cropping} icon={CROP_ICON} label={t('shp.crop')} title={t('shp.cropTitle')} onClick={() => crop(!cropping)} />
+          </Col>
+        )}
+        {!line && hasCrop(v.crop) && (
+          <Btn label={t('shp.cropReset')} title={t('shp.cropReset')} onClick={() => {
+            const c = v.crop!, w = box.w / (1 - c.l - c.r), h = box.h / (1 - c.t - c.b)
+            const nv = { ...v }; delete nv.crop
+            set({ vshape: nv, width: Math.round(w), height: Math.round(h), src: shapeSrc(nv, w, h) })
+          }} />
+        )}
         <Col>
           <Row>{ill('widthArrows', 20)}<NumField label={t('common.width')} unit={t('unit.cm')} step={0.5} min={0.3} value={pxToCm(box.w)} onChange={(cm) => setSize(cmToPx(cm), box.h)} /></Row>
           <Row>{ill('heightArrows', 20)}<NumField label={t('common.height')} unit={t('unit.cm')} step={0.5} min={0.3} value={pxToCm(box.h)} onChange={(cm) => setSize(box.w, cmToPx(cm))} /></Row>

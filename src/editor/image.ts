@@ -16,7 +16,7 @@ import type { Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
 import type { EditorView, NodeView } from '@tiptap/pm/view'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import { t, fmtNum, onLangChange, type Key } from '../i18n'
-import { parseVShape, shapeSrc, isLine, type VShape } from './shapes'
+import { parseVShape, shapeSrc, isLine, fullSize, hasCrop, type VShape } from './shapes'
 import { fitOnPage, pageAt, relayoutNow } from './Pagination'
 
 export type ImgWrap = 'topBottom' | 'square'
@@ -307,6 +307,17 @@ interface DropTarget {
   preview: { left: number; top: number }
 }
 
+// Shape crop mode (Μορφή σχήματος ▸ Περικοπή): while on, the selected shape's handles crop instead of resize.
+let cropMode = false
+const cropListeners = new Set<() => void>()
+export const isShapeCropMode = () => cropMode
+export function setShapeCropMode(on: boolean) {
+  if (on === cropMode) return
+  cropMode = on
+  cropListeners.forEach((f) => f())
+}
+export function onCropMode(f: () => void) { cropListeners.add(f); return () => { cropListeners.delete(f) } }
+
 class PictureView implements NodeView {
   dom: HTMLElement
   img: HTMLImageElement
@@ -332,7 +343,8 @@ class PictureView implements NodeView {
       this.render()
     })
     this.dom.appendChild(this.img)
-    for (const corner of ['nw', 'ne', 'sw', 'se']) {
+    // Side handles (n, e, s, w) only show on shapes: pictures always keep their proportions.
+    for (const corner of ['nw', 'ne', 'sw', 'se', 'n', 'e', 's', 'w']) {
       const h = document.createElement('span')
       h.className = `wpic-handle ${corner}`
       h.addEventListener('pointerdown', (e) => this.resize(e, corner))
@@ -349,6 +361,7 @@ class PictureView implements NodeView {
     this.dom.appendChild(hint)
     this.labels()
     this.offLang = onLangChange(() => this.labels())
+    this.offCrop = onCropMode(() => this.render())
     this.dom.addEventListener('dblclick', (e) => {
       e.preventDefault()
       // Keep the picture selected (so its ribbon tab stays open) while panning.
@@ -370,7 +383,8 @@ class PictureView implements NodeView {
     this.radiusHandle.title = t('pic.radiusTitle')
     ;(this.dom.querySelector('.wpic-pan-hint') as HTMLElement).textContent = t('pic.panHint')
   }
-  destroy() { this.offLang() }
+  private offCrop: () => void
+  destroy() { this.offLang(); this.offCrop() }
 
   private render() {
     const a = this.attrs
@@ -380,6 +394,7 @@ class PictureView implements NodeView {
     if (this.img.getAttribute('src') !== src) this.img.src = src
     this.img.alt = a.alt || ''
     this.dom.classList.toggle('wshape', !!a.vshape)
+    this.dom.classList.toggle('cropping', !!a.vshape && cropMode && !isLine(a.vshape.k))
     const st = pictureStyles(a, box, { lineHeight: this.lineHeight() })
     this.dom.setAttribute('style', st.wrap)
     this.img.setAttribute('style', `${st.img};position:relative;z-index:1`)
@@ -613,34 +628,51 @@ class PictureView implements NodeView {
   private resize(e: PointerEvent, corner: string) {
     e.preventDefault()
     e.stopPropagation()
-    const x0 = e.clientX
+    const x0 = e.clientX, y0 = e.clientY
     const start = displaySize(this.attrs, this.natural)
     const zoom = this.dom.getBoundingClientRect().width / (this.dom.offsetWidth || 1) || 1
     const colW = (this.view.dom as HTMLElement).clientWidth
-    const dir = corner.includes('w') ? -1 : 1
     const ratio = start.h / start.w
-    const calc = (ev: PointerEvent) => Math.round(Math.max(24, Math.min(colW, start.w + (dir * (ev.clientX - x0)) / zoom)))
-    // Shapes resize freely (Shift keeps the proportions); pictures always keep theirs.
+    // Which edges this handle moves: ±1 per axis, 0 = that axis stays.
+    const dx = corner.includes('w') ? -1 : corner.includes('e') ? 1 : 0
+    const dy = corner.includes('n') ? -1 : corner.includes('s') ? 1 : 0
     const vs = this.attrs.vshape
-    const y0 = e.clientY
-    const dirY = corner.includes('n') ? -1 : 1
-    const calcH = (ev: PointerEvent, w: number) => {
-      if (!vs || ev.shiftKey) return Math.round(w * ratio)
-      return Math.round(Math.max(isLine(vs.k) ? 12 : 16, start.h + (dirY * (ev.clientY - y0)) / zoom))
+    const crop = !!vs && cropMode && !isLine(vs.k)
+    const full = vs ? fullSize(vs, start.w, start.h) : null
+    const c0 = vs?.crop || { l: 0, t: 0, r: 0, b: 0 }
+    // Shapes resize freely (Shift keeps the proportions); pictures always keep theirs.
+    const calc = (ev: PointerEvent): { w: number; h: number; v?: VShape } => {
+      let w = dx ? Math.round(Math.max(24, Math.min(colW, start.w + (dx * (ev.clientX - x0)) / zoom))) : start.w
+      let h = dy ? Math.round(Math.max(vs && isLine(vs.k) ? 12 : 16, start.h + (dy * (ev.clientY - y0)) / zoom)) : start.h
+      if (!vs) { if (!dx) w = Math.round(h / ratio); return { w, h: Math.round(w * ratio) } }
+      if (!crop) {
+        if (ev.shiftKey) { if (dx) h = Math.round(w * ratio); else w = Math.round(h / ratio) }
+        return { w, h, v: vs }
+      }
+      // Cropping: the full shape keeps its size; the dragged edge cuts into it (or uncovers it again).
+      const { fw, fh } = full!
+      const c = { ...c0 }
+      const clamp = (n: number, max: number) => Math.max(0, Math.min(max, n))
+      if (dx > 0) c.r = clamp(1 - c.l - w / fw, 0.95 - c.l)
+      if (dx < 0) c.l = clamp(1 - c.r - w / fw, 0.95 - c.r)
+      if (dy > 0) c.b = clamp(1 - c.t - h / fh, 0.95 - c.t)
+      if (dy < 0) c.t = clamp(1 - c.b - h / fh, 0.95 - c.b)
+      w = Math.round(fw * (1 - c.l - c.r)); h = Math.round(fh * (1 - c.t - c.b))
+      const nv: VShape = { ...vs }
+      if (hasCrop(c)) nv.crop = c; else delete nv.crop
+      return { w, h, v: nv }
     }
     const move = (ev: PointerEvent) => {
-      const w = calc(ev)
-      const h = calcH(ev, w)
+      const { w, h, v } = calc(ev)
       this.img.style.width = `${w}px`
       this.img.style.height = `${h}px`
-      if (vs) this.img.src = shapeSrc(vs, w, h)
+      if (v) this.img.src = shapeSrc(v, w, h)
     }
     const up = (ev: PointerEvent) => {
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
-      const w = calc(ev)
-      const h = calcH(ev, w)
-      this.setAttrs(vs ? { width: w, height: h, src: shapeSrc(vs, w, h) } : { width: w, height: Math.round(w * ratio) })
+      const { w, h, v } = calc(ev)
+      this.setAttrs(v ? { width: w, height: h, vshape: v, src: shapeSrc(v, w, h) } : { width: w, height: h })
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)

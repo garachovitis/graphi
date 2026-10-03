@@ -10,8 +10,8 @@ const SCALE = 3 // canvas pixels per CSS px → crisp in print/PDF
 
 type Pt = { x: number; y: number; p: number }
 
-export function SignatureDialog({ api, close }: { api: AppApi; close: () => void }) {
-  const [mode, setMode] = useState<'draw' | 'file'>('draw')
+export function SignatureDialog({ api, close, initialMode = 'draw' }: { api: AppApi; close: () => void; initialMode?: 'draw' | 'file' }) {
+  const [mode, setMode] = useState<'draw' | 'file'>(initialMode)
   const [ink, setInk] = useState<string>(INK[0][0])
   const [width, setWidth] = useState(2.4)
   const [strokes, setStrokes] = useState<Pt[][]>([])
@@ -21,6 +21,8 @@ export function SignatureDialog({ api, close }: { api: AppApi; close: () => void
   const current = useRef<Pt[] | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const W = 520, H = 200
+  // Opened from «Από εικόνα…»: go straight to the file picker (still within the menu click's activation).
+  useEffect(() => { if (initialMode === 'file') fileRef.current?.click() }, [])
 
   // Redraw all strokes as smooth quadratic curves; pen pressure modulates width.
   const redraw = (list: Pt[][]) => {

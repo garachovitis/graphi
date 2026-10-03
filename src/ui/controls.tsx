@@ -349,7 +349,7 @@ export function ColorWell(p: { value: string | null; onChange: (c: string | null
 }
 
 /** Editable combo (font size): type a value and press Enter, or pick from the list. */
-export function Combo(p: { value: string; options: string[]; onCommit: (v: string) => void; width: number; title: string; renderOption?: (o: string) => ReactNode; editable?: boolean; label?: (v: string) => string }) {
+export function Combo(p: { value: string; options: string[]; onCommit: (v: string) => void; width: number; title: string; renderOption?: (o: string) => ReactNode; editable?: boolean; label?: (v: string) => string; footer?: (close: () => void) => ReactNode }) {
   // label: display name for a read-only combo (editable ones commit what is typed)
   const shown = p.label ? p.label(p.value) : p.value
   const [text, setText] = useState(shown)
@@ -381,6 +381,7 @@ export function Combo(p: { value: string; options: string[]; onCommit: (v: strin
             <span className="menu-text">{p.renderOption ? p.renderOption(o) : o}</span>
           </button>
         ))}
+        {p.footer && <><MenuSep />{p.footer(() => setOpen(false))}</>}
       </Popover>
     </div>
   )

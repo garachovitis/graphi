@@ -1,6 +1,8 @@
 // Paragraph-level formatting shared by paragraphs and headings, modelled on Word's
 // Paragraph dialog: named style, line spacing, space before/after, indents, page-break-before.
 import { Extension } from '@tiptap/core'
+import { NodeSelection, Plugin } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { cssToPt, parseLineHeight, round2 } from './units'
 import { lineHeightCss, styleById } from '../model/styles'
 
@@ -66,6 +68,51 @@ export const ParagraphFormat = Extension.create({
         }).run()
       },
     }
+  },
+
+  // Captions behave like a small text box: framed while the caret is in them, and a click on the
+  // "Εικόνα N:" label (or Esc inside) selects the whole caption so Delete removes it.
+  addProseMirrorPlugins() {
+    const isCap = (n: { type: { name: string }; attrs: Record<string, unknown> }) => n.type.name === 'paragraph' && !!n.attrs.captionKind
+    return [new Plugin({
+      props: {
+        decorations: (state) => {
+          const decos: Decoration[] = []
+          const { selection } = state
+          state.doc.descendants((n, pos) => {
+            if (!isCap(n)) return n.isBlock && !n.isTextblock
+            const sel = selection instanceof NodeSelection && selection.from === pos
+            const inside = !sel && selection.from > pos && selection.to < pos + n.nodeSize
+            decos.push(Decoration.node(pos, pos + n.nodeSize, { class: `caption-box${inside ? ' caption-active' : ''}` }))
+            return false
+          })
+          return DecorationSet.create(state.doc, decos)
+        },
+        handleDOMEvents: {
+          mousedown: (view, ev) => {
+            const p = (ev.target as HTMLElement | null)?.closest?.('p.caption-box') as HTMLElement | null
+            if (!p || ev.button !== 0) return false
+            const pos = view.posAtDOM(p, 0) - 1
+            const n = view.state.doc.nodeAt(pos)
+            if (!n || !isCap(n)) return false
+            // Left of the first character on its line = on the auto label.
+            const c = view.coordsAtPos(pos + 1)
+            if (ev.clientY > c.bottom || ev.clientX >= c.left) return false
+            ev.preventDefault()
+            view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, pos)))
+            view.focus()
+            return true
+          },
+        },
+        handleKeyDown: (view, ev) => {
+          if (ev.key !== 'Escape') return false
+          const { $from, empty } = view.state.selection
+          if (!empty || !isCap($from.parent)) return false
+          view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, $from.before())))
+          return true
+        },
+      },
+    })]
   },
 
   addGlobalAttributes() {

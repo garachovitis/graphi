@@ -4,7 +4,7 @@ import { EditorContent } from '@tiptap/react'
 import { layoutStore } from '../editor/layoutStore'
 import { expandHF, mmToPx } from '../model/settings'
 import type { AppApi } from './App'
-import { Ruler } from './Ruler'
+import { Ruler, VRuler } from './Ruler'
 import { samplePages } from './Training'
 import { t } from '../i18n'
 
@@ -85,6 +85,8 @@ export function Canvas({ api }: { api: AppApi }) {
     <div className="canvas-scroll" ref={scrollRef}>
       {api.showRuler && view === 'print' && <Ruler api={api} />}
       <div className="canvas-zoom" style={{ width: pageW * zoom, height: totalH * zoom }}>
+        {/* Outside the scaled .pages, so the vertical rulers keep a fixed width at any zoom. */}
+        {api.showRuler && view === 'print' && Array.from({ length: pages }, (_, i) => <VRuler key={i} api={api} top={i * P} />)}
         <div
           className={`pages${api.showMarks ? ' show-marks' : ''}${view === 'web' ? ' layout-web' : ''}${reflow ? ' layout-reflow' : ''}`}
           style={{ width: pageW, height: totalH, transform: `scale(${zoom})` }}
@@ -103,7 +105,7 @@ export function Canvas({ api }: { api: AppApi }) {
                 )}
                 {showHF && hf.footerText && view === 'print' && (
                   <div className="page-hf footer" style={{ ...hfStyle, bottom: mmToPx(hf.footerDistance), textAlign: hf.footerAlign }}
-                    onDoubleClick={() => api.openDialog({ type: 'headerFooter' })} title={t('canvas.editFooter')}>
+                    onDoubleClick={() => api.openDialog({ type: 'headerFooter', focus: 'footer' })} title={t('canvas.editFooter')}>
                     {expandHF(hf.footerText, i + 1, pages, s.title)}
                   </div>
                 )}
@@ -115,7 +117,7 @@ export function Canvas({ api }: { api: AppApi }) {
                 {view === 'print' && (
                   <>
                     <div className="hf-hit top" style={{ height: mt * 0.8 }} onDoubleClick={() => api.openDialog({ type: 'headerFooter' })} />
-                    <div className="hf-hit bottom" style={{ height: mb * 0.8 }} onDoubleClick={() => api.openDialog({ type: 'headerFooter' })} />
+                    <div className="hf-hit bottom" style={{ height: mb * 0.8 }} onDoubleClick={() => api.openDialog({ type: 'headerFooter', focus: 'footer' })} />
                   </>
                 )}
               </div>

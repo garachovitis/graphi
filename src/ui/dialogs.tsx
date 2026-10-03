@@ -3,9 +3,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import type { AppApi } from './App'
 import {
-  PAPER_SIZES, MARGIN_PRESETS, withOrientation, withPaper, type DocSettings, type HFAlign, mmToPx,
+  PAPER_SIZES, MARGIN_PRESETS, withOrientation, withPaper, type DocSettings, type HFAlign, mmToPx, expandHF,
 } from '../model/settings'
-import { FONT_CHOICES, fontHint, fontLabel, fontStack } from '../model/styles'
+import { addUserFont, fontChoices, fontHint, fontLabel, fontStack, isInstalled, removeUserFont, userFonts } from '../model/styles'
 import { currentFontFamily, currentFontSizePt, currentStyle, FONT_SIZES } from '../editor/format'
 import { layoutStore } from '../editor/layoutStore'
 import { countWords } from './StatusBar'
@@ -20,7 +20,9 @@ import { t, fmtInt, fmtNum, decSep, type Key } from '../i18n'
 
 export type DialogState =
   | null
-  | { type: 'table' | 'link' | 'symbol' | 'headerFooter' | 'font' | 'paragraph' | 'pageSetup' | 'wordCount' | 'shortcuts' | 'imageUrl' | 'listStart' | 'goto' | 'signature' }
+  | { type: 'table' | 'link' | 'symbol' | 'font' | 'paragraph' | 'pageSetup' | 'wordCount' | 'shortcuts' | 'imageUrl' | 'addFont' | 'govSign' | 'listStart' | 'goto' }
+  | { type: 'headerFooter'; focus?: 'header' | 'footer' }
+  | { type: 'signature'; mode?: 'draw' | 'file' }
   | { type: 'theme'; theme?: DocTheme }
 
 export function Modal(p: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; width?: number }) {
@@ -79,16 +81,18 @@ export function Dialogs({ api, dialog, close }: { api: AppApi; dialog: DialogSta
     case 'pageSetup': return <PageSetup api={api} close={close} />
     case 'paragraph': return <ParagraphDlg api={api} close={close} />
     case 'font': return <FontDlg api={api} close={close} />
-    case 'headerFooter': return <HeaderFooterDlg api={api} close={close} />
+    case 'headerFooter': return <HeaderFooterDlg api={api} close={close} focus={dialog.focus} />
     case 'table': return <TableDlg api={api} close={close} />
     case 'link': return <LinkDlg api={api} close={close} />
     case 'imageUrl': return <ImageUrlDlg api={api} close={close} />
+    case 'govSign': return <GovSignDlg api={api} close={close} />
+    case 'addFont': return <AddFontDlg api={api} close={close} />
     case 'symbol': return <SymbolDlg api={api} close={close} />
     case 'wordCount': return <WordCountDlg api={api} close={close} />
     case 'shortcuts': return <ShortcutsDlg close={close} />
     case 'listStart': return <ListStartDlg api={api} close={close} />
     case 'goto': return <GotoDlg api={api} close={close} />
-    case 'signature': return <SignatureDialog api={api} close={close} />
+    case 'signature': return <SignatureDialog api={api} close={close} initialMode={dialog.mode} />
     case 'theme': return <ThemeStudio api={api} close={close} initial={dialog.theme} />
   }
 }
@@ -271,7 +275,8 @@ function FontDlg({ api, close }: { api: AppApi; close: () => void }) {
     c.run()
     close()
   }
-  const fonts = FONT_CHOICES.includes(family) ? FONT_CHOICES : [family, ...FONT_CHOICES]
+  const choices = fontChoices()
+  const fonts = choices.includes(family) ? choices : [family, ...choices]
   return (
     <Modal title={t('dlg.font')} onClose={close} width={500} footer={<Footer onOk={apply} onCancel={close} />}>
       <div className="dlg-grid">
@@ -314,7 +319,7 @@ const HF_PRESETS: [Key, string][] = [
 ]
 const hfPresetText = (v: string) => (/^[a-z]+\.[A-Za-z]+$/.test(v) ? t(v as Key) : v)
 
-function HFEditor(p: { label: string; text: string; align: HFAlign; onText: (t: string) => void; onAlign: (a: HFAlign) => void }) {
+function HFEditor(p: { label: string; text: string; align: HFAlign; autoFocus?: boolean; onFocus?: () => void; onText: (t: string) => void; onAlign: (a: HFAlign) => void }) {
   const ref = useRef<HTMLInputElement>(null)
   const insert = (tok: string) => {
     const el = ref.current
@@ -327,7 +332,7 @@ function HFEditor(p: { label: string; text: string; align: HFAlign; onText: (t: 
   return (
     <fieldset><legend>{p.label}</legend>
       <div className="hf-line">
-        <input ref={ref} value={p.text} onChange={(e) => p.onText(e.target.value)} placeholder={t('dlg.hfEmpty')} />
+        <input ref={ref} autoFocus={p.autoFocus} onFocus={p.onFocus} value={p.text} onChange={(e) => p.onText(e.target.value)} placeholder={t('dlg.hfEmpty')} />
         <select value="" onChange={(e) => { if (e.target.value !== '') p.onText(hfPresetText(HF_PRESETS[Number(e.target.value)][1])) }}>
           <option value="">{t('dlg.hfPresets')}</option>
           {HF_PRESETS.map(([l], i) => <option key={l} value={i}>{t(l)}</option>)}
@@ -348,15 +353,35 @@ function HFEditor(p: { label: string; text: string; align: HFAlign; onText: (t: 
   )
 }
 
-function HeaderFooterDlg({ api, close }: { api: AppApi; close: () => void }) {
+function HeaderFooterDlg({ api, close, focus: initial = 'header' }: { api: AppApi; close: () => void; focus?: 'header' | 'footer' }) {
   const [hf, setHf] = useState(api.settings.hf)
+  const [focus, setFocus] = useState(initial)
+  const pages = Math.max(1, layoutStore.pageCount)
+  // Live preview: the first page that shows header/footer, as it will look in the document.
+  const page = hf.differentFirstPage && pages > 1 ? 2 : 1
+  const show = (txt: string) => expandHF(txt, page, pages, api.settings.title)
+  const preview = (
+    <div className="hf-preview" aria-label={t('dlg.hfPreview')}>
+      <div className="hf-preview-label">{t('dlg.hfPreview')} · {t('canvas.page', { n: page })}</div>
+      <div className="hf-preview-page">
+        <div className={`hf-preview-text top${focus === 'header' ? ' on' : ''}`} style={{ textAlign: hf.headerAlign }}>{show(hf.headerText) || <i>{t('dlg.header')}</i>}</div>
+        <div className="hf-preview-body">{[90, 100, 96, 100, 70, 0, 100, 94, 60].map((w, i) => <span key={i} style={{ width: `${w}%` }} />)}</div>
+        <div className={`hf-preview-text bottom${focus === 'footer' ? ' on' : ''}`} style={{ textAlign: hf.footerAlign }}>{show(hf.footerText) || <i>{t('dlg.footer')}</i>}</div>
+      </div>
+    </div>
+  )
   return (
-    <Modal title={t('dlg.headerFooter')} onClose={close} width={600}
+    <Modal title={t('dlg.headerFooter')} onClose={close} width={760}
       footer={<Footer onCancel={close} onOk={() => { api.setSettings({ ...api.settings, hf }); close() }} />}>
-      <HFEditor label={t('dlg.header')} text={hf.headerText} align={hf.headerAlign} onText={(t) => setHf({ ...hf, headerText: t })} onAlign={(a) => setHf({ ...hf, headerAlign: a })} />
-      <HFEditor label={t('dlg.footer')} text={hf.footerText} align={hf.footerAlign} onText={(t) => setHf({ ...hf, footerText: t })} onAlign={(a) => setHf({ ...hf, footerAlign: a })} />
+      <div className="hf-dlg">
+      <div className="hf-dlg-form">
+      <HFEditor autoFocus={initial === 'header'} onFocus={() => setFocus('header')} label={t('dlg.header')} text={hf.headerText} align={hf.headerAlign} onText={(t) => setHf({ ...hf, headerText: t })} onAlign={(a) => setHf({ ...hf, headerAlign: a })} />
+      <HFEditor autoFocus={initial === 'footer'} onFocus={() => setFocus('footer')} label={t('dlg.footer')} text={hf.footerText} align={hf.footerAlign} onText={(t) => setHf({ ...hf, footerText: t })} onAlign={(a) => setHf({ ...hf, footerAlign: a })} />
       <label className="check"><input type="checkbox" checked={hf.differentFirstPage} onChange={(e) => setHf({ ...hf, differentFirstPage: e.target.checked })} /> {t('dlg.hfDifferentFirst')}</label>
       <p className="muted small">{t('dlg.hfNote')}</p>
+      </div>
+      {preview}
+      </div>
     </Modal>
   )
 }
@@ -421,6 +446,70 @@ function ImageUrlDlg({ api, close }: { api: AppApi; close: () => void }) {
     <Modal title={t('dlg.imageUrl')} onClose={close} width={480} footer={<Footer onOk={ok} onCancel={close} okLabel={t('common.insert')} extra={err && <span className="err">{err}</span>} />}>
       <Field label={t('dlg.imageAddress')} wide><input value={url} placeholder={t('dlg.imageUrlPlaceholder')} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ok() }} /></Field>
       <p className="muted small">{t('dlg.imageUrlNote')}</p>
+    </Modal>
+  )
+}
+
+// gov.gr offers no public signing API for third-party apps: «Ψηφιακή Βεβαίωση Εγγράφου» works only
+// through its own site (Taxisnet login + SMS code), and the B2B co-signing API is limited to approved
+// legal entities via ΚΕΔ. So we guide the user: export a PDF, sign it on gov.gr, keep the PDF unchanged.
+// Only these fixed official addresses are opened; nothing is sent from the app.
+const GOV_SIGN_URL = 'https://www.gov.gr/ipiresies/polites-kai-kathemerinoteta/psephiaka-eggrapha-gov-gr/psephiake-bebaiose-eggraphou'
+
+function GovSignDlg({ api, close }: { api: AppApi; close: () => void }) {
+  const step = (n: number, text: string, action?: ReactNode) => (
+    <li style={{ display: 'flex', gap: 10, alignItems: 'flex-start', margin: '0 0 10px' }}>
+      <b style={{ flex: '0 0 22px', height: 22, borderRadius: 11, background: 'var(--primary)', color: '#fff', display: 'grid', placeItems: 'center', fontSize: 12 }}>{n}</b>
+      <span style={{ flex: 1, lineHeight: 1.45 }}>{text}{action && <div style={{ marginTop: 6 }}>{action}</div>}</span>
+    </li>
+  )
+  return (
+    <Modal title={t('gov.title')} onClose={close} width={540} footer={<><span className="grow" /><button className="btn" onClick={close}>{t('common.close')}</button></>}>
+      <ol style={{ listStyle: 'none', padding: 0, margin: '12px 0' }}>
+        {step(1, t('gov.step1'), <button className="btn primary" onClick={() => api.exportPdf()}>{t('gov.exportPdf')}</button>)}
+        {step(2, t('gov.step2'), <button className="btn" onClick={() => platform.openExternal(GOV_SIGN_URL)}>{t('gov.openGov')}</button>)}
+        {step(3, t('gov.step3'))}
+      </ol>
+      <p className="muted small" style={{ lineHeight: 1.45 }}>{t('gov.warn')}</p>
+    </Modal>
+  )
+}
+
+function AddFontDlg({ api, close }: { api: AppApi; close: () => void }) {
+  const [name, setName] = useState('')
+  const [mine, setMine] = useState(userFonts)
+  const n = name.trim().replace(/["';{}]/g, '')
+  const found = !!n && isInstalled(n)
+  const ok = () => {
+    if (!n) return
+    addUserFont(n)
+    api.editor.chain().focus().setFontFamily(fontStack(n)).run()
+    close()
+  }
+  return (
+    <Modal title={t('font.addTitle')} onClose={close} width={500} footer={<Footer onOk={ok} onCancel={close} okLabel={t('font.addOk')}
+      extra={n && !found && <span className="err">{t('font.notFound')}</span>} />}>
+      <ol className="small muted" style={{ margin: '0 0 12px', paddingLeft: 18, lineHeight: 1.5 }}>
+        <li>{t('font.addStep1')}</li>
+        <li>{t('font.addStep2')}</li>
+        <li>{t('font.addStep3')}</li>
+      </ol>
+      <Field label={t('font.addName')} wide>
+        <input autoFocus value={name} placeholder={t('font.addPlaceholder')} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ok() }} />
+      </Field>
+      {n && <p style={{ fontFamily: fontStack(n), fontSize: 20, margin: '10px 0' }}>{t('font.addPreview')}</p>}
+      <p className="muted small">{t('font.addNote')}</p>
+      {mine.length > 0 && (
+        <>
+          <p className="small" style={{ margin: '12px 0 4px' }}>{t('font.addMine')}</p>
+          {mine.map((f) => (
+            <div key={f} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontFamily: fontStack(f), flex: 1 }}>{f}</span>
+              <button className="btn" onClick={() => { removeUserFont(f); setMine(userFonts()) }}>{t('font.addRemove')}</button>
+            </div>
+          ))}
+        </>
+      )}
     </Modal>
   )
 }

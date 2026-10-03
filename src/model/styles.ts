@@ -30,11 +30,24 @@ export const DEFAULT_SIZE_PT = 11
 /** Fonts offered in the font picker. */
 export const FONT_CHOICES = ['Calibri', 'Arial', 'Tahoma']
 
+// Fonts the user added from «Προσθήκη γραμματοσειράς»: names of fonts installed on their system.
+const USER_FONTS_KEY = 'grafi:userFonts'
+export function userFonts(): string[] {
+  try { const v = JSON.parse(localStorage.getItem(USER_FONTS_KEY) || '[]'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string') : [] } catch { return [] }
+}
+function saveUserFonts(v: string[]) {
+  try { localStorage.setItem(USER_FONTS_KEY, JSON.stringify(v)) } catch { /* ignore */ }
+}
+export const addUserFont = (name: string) => { if (!fontChoices().includes(name)) saveUserFonts([...userFonts(), name]) }
+export const removeUserFont = (name: string) => saveUserFonts(userFonts().filter((f) => f !== name))
+/** Built-in choices plus the user's own fonts. */
+export const fontChoices = () => [...FONT_CHOICES, ...userFonts()]
+
 // The bundled font a name renders with when the original isn't installed. The UI names what the
 // user actually sees (the original is a third-party trademark); the file keeps the original name.
 const SUBSTITUTES: Record<string, string> = { Calibri: 'Carlito', 'Calibri Light': 'Carlito', Arial: 'Arimo' }
 const installed = new Map<string, boolean>()
-function isInstalled(name: string): boolean {
+export function isInstalled(name: string): boolean {
   let hit = installed.get(name)
   if (hit === undefined) {
     // Metric-compatible substitutes measure the same, so compare against a monospace fallback.
